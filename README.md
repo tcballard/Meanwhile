@@ -88,6 +88,23 @@ token itself.
 
 ## Release and Homebrew
 
+### Unsigned pre-release
+
+Build an explicitly labelled, ad-hoc-signed pre-release and matching Homebrew
+cask with:
+
+```sh
+GITHUB_REPOSITORY="tcballard/Meanwhile" ./Scripts/release-unsigned.sh
+```
+
+This produces `dist/Meanwhile-0.1.0-unsigned.zip` and `dist/meanwhile.rb`.
+Publish the archive only as a GitHub **pre-release** tagged
+`v0.1.0-unsigned`. The generated cask identifies it as unsigned and tells users
+that Gatekeeper will block the first launch. Users who trust the build must
+explicitly remove quarantine themselves; the cask does not bypass Gatekeeper.
+
+### Signed release
+
 Create a Developer ID signed, notarized release and matching Homebrew cask with:
 
 ```sh

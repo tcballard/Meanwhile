@@ -6,11 +6,12 @@ CONFIGURATION="${CONFIGURATION:-debug}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 APP="$ROOT/dist/Meanwhile.app"
 CONTENTS="$APP/Contents"
+BUILD_PATH="${SWIFT_BUILD_PATH:-$ROOT/.build}"
 
 cd "$ROOT"
-swift build --disable-sandbox --configuration "$CONFIGURATION" --product Meanwhile
-swift build --disable-sandbox --configuration "$CONFIGURATION" --product MeanwhileHook
-BIN_DIR="$(swift build --disable-sandbox --configuration "$CONFIGURATION" --show-bin-path)"
+swift build --disable-sandbox --scratch-path "$BUILD_PATH" --configuration "$CONFIGURATION" --product Meanwhile >&2
+swift build --disable-sandbox --scratch-path "$BUILD_PATH" --configuration "$CONFIGURATION" --product MeanwhileHook >&2
+BIN_DIR="$(swift build --disable-sandbox --scratch-path "$BUILD_PATH" --configuration "$CONFIGURATION" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Helpers" "$CONTENTS/Resources"

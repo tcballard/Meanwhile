@@ -19,11 +19,13 @@ Claude status-line output, 10-second debounce, snooze/dismiss, failing CI and
 review sources, focus follow, parallel-session awareness, configuration,
 signed packaging, notarization tooling, and generated Homebrew cask metadata.
 
-**Release gate:** Publish only after the automated tests and strict bundle
+**Stable release gate:** Publish a stable release only after the automated tests and strict bundle
 signature verification pass, the hook installer is exercised against clean and
 existing Claude/Codex settings, and a real agent permission prompt focuses the
 correct terminal. Developer ID notarization and a release-host URL must exist
-before the public archive or cask is published.
+before the stable public archive or cask is published. An earlier testing build
+may be distributed only when its tag, GitHub release, archive, and Homebrew cask
+all identify it clearly as an unsigned pre-release.
 
 **Stop condition:** If a week of real self-use does not produce repeated
 glances and measurable review/CI clearance, stop at v0.1 and do not manufacture
