@@ -114,8 +114,12 @@ GITHUB_REPOSITORY="owner/Meanwhile" \
 ./Scripts/release.sh
 ```
 
-The script produces `dist/Meanwhile-0.1.0.zip` and `dist/meanwhile.rb`. Publishing
-the archive, cask, and GitHub release remains an explicit release-owner action.
+The script builds and signs the app in a temporary local directory, then
+produces `dist/Meanwhile-0.1.0.zip` and `dist/meanwhile.rb`. It verifies the
+stapled app and a clean extraction of the final archive before returning.
+Publishing the archive, cask, and GitHub release remains an explicit
+release-owner action. Set `RELEASE_OUTPUT_DIR` to write the final artifacts
+somewhere other than `dist`.
 
 ## Package layout
 
