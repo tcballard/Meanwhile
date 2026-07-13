@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Swift tests
+        run: swift test
+
+      - name: Check release script syntax
+        run: zsh -n Scripts/*.sh
+
+      - name: Package unsigned release
+        env:
+          GITHUB_REPOSITORY: tcballard/Meanwhile
+          RELEASE_OUTPUT_DIR: ${{ runner.temp }}/meanwhile-dist
+          SWIFT_BUILD_PATH: ${{ runner.temp }}/meanwhile-build
+        run: ./Scripts/release-unsigned.sh
+
+      - name: Verify packaged artifacts
+        run: |
+          test -f "${{ runner.temp }}/meanwhile-dist/Meanwhile-0.1.0-unsigned.zip"
+          test -f "${{ runner.temp }}/meanwhile-dist/meanwhile.rb"
+          ruby -c "${{ runner.temp }}/meanwhile-dist/meanwhile.rb"
