@@ -11,17 +11,17 @@ REPOSITORY="$1"
 VERSION="$2"
 SHA256="$3"
 CHANNEL="${4:-stable}"
-OUTPUT="$ROOT/dist/meanwhile.rb"
+OUTPUT="${CASK_OUTPUT_PATH:-$ROOT/dist/meanwhile.rb}"
 
 if [[ "$CHANNEL" == "unsigned" ]]; then
     DESCRIPTION="Unsigned pre-release of Meanwhile — for testing only"
-    CAVEATS=$'\n\n  caveats <<~EOS\n    This is an unsigned pre-release for testing only. macOS Gatekeeper will\n    block its first launch. If you trust this build, explicitly remove quarantine:\n\n      xattr -dr com.apple.quarantine /Applications/Meanwhile.app\n  EOS'
+    CAVEATS=$'\n  caveats <<~EOS\n    This is an unsigned pre-release for testing only. macOS Gatekeeper will\n    block its first launch. If you trust this build, explicitly remove quarantine:\n\n      xattr -dr com.apple.quarantine /Applications/Meanwhile.app\n  EOS'
 else
     DESCRIPTION="Use coding-agent wait time for reviews and failing CI"
     CAVEATS=""
 fi
 
-mkdir -p "$ROOT/dist"
+mkdir -p "${OUTPUT:h}"
 cat > "$OUTPUT" <<EOF
 cask "meanwhile" do
   version "$VERSION"
@@ -32,14 +32,15 @@ cask "meanwhile" do
   desc "$DESCRIPTION"
   homepage "https://github.com/$REPOSITORY"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
+
   app "Meanwhile.app"
-$CAVEATS
 
   zap trash: [
     "~/Library/Application Support/Meanwhile",
     "~/Library/Preferences/com.meanwhile.Meanwhile.plist",
   ]
+$CAVEATS
 end
 EOF
 

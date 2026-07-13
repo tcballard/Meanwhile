@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 CONFIGURATION="${CONFIGURATION:-debug}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
-APP="$ROOT/dist/Meanwhile.app"
+APP_OUTPUT_DIR="${APP_OUTPUT_DIR:-$ROOT/dist}"
+APP="$APP_OUTPUT_DIR/Meanwhile.app"
 CONTENTS="$APP/Contents"
 BUILD_PATH="${SWIFT_BUILD_PATH:-$ROOT/.build}"
 
