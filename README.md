@@ -129,5 +129,3 @@ somewhere other than `dist`.
   dispositions, terminal focus, and integration installation.
 - `Meanwhile`: the menu-bar executable.
 - `MeanwhileHook`: the Claude/Codex hook and Claude status-line helper.
-
-See [ROADMAP.md](ROADMAP.md) for the release gate and post-v0.1 decision rule.
