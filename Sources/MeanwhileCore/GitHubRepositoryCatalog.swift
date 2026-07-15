@@ -44,3 +44,25 @@ public struct GitHubRepositoryCatalog: Sendable {
         ).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 }
+
+public enum GitHubAuthenticationStatus: Equatable, Sendable {
+    case authenticated
+    case notAuthenticated
+}
+
+public struct GitHubAuthenticationChecker: Sendable {
+    public static let command = "gh auth status"
+
+    private let runner: any CommandRunning
+
+    public init(runner: any CommandRunning = PeripheralCommandRunner()) {
+        self.runner = runner
+    }
+
+    public func status() -> GitHubAuthenticationStatus {
+        guard let result = try? runner.run(Self.command, timeoutSeconds: 10) else {
+            return .notAuthenticated
+        }
+        return result.exitCode == 0 ? .authenticated : .notAuthenticated
+    }
+}

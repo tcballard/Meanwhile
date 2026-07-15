@@ -2,6 +2,7 @@ import Foundation
 
 public final class AgentEventStore: @unchecked Sendable {
     public let directory: URL
+    public let latestEventURL: URL
     private let fileManager: FileManager
     private let lock = NSLock()
     private let encoder: JSONEncoder
@@ -14,6 +15,8 @@ public final class AgentEventStore: @unchecked Sendable {
         self.fileManager = fileManager
         self.directory = directory ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Meanwhile/Sessions", isDirectory: true)
+        latestEventURL = self.directory
+            .appendingPathComponent(".latest-agent-event.json")
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
@@ -26,6 +29,7 @@ public final class AgentEventStore: @unchecked Sendable {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try encoder.encode(session)
         try data.write(to: url(for: session), options: .atomic)
+        try data.write(to: latestEventURL, options: .atomic)
     }
 
     public func session(provider: AgentProvider, sessionID: String) -> AgentSessionState? {
@@ -40,6 +44,12 @@ public final class AgentEventStore: @unchecked Sendable {
             updatedAt: .distantPast
         )
         return decode(url: url(for: prototype))
+    }
+
+    public func latestEvent() -> AgentSessionState? {
+        lock.lock()
+        defer { lock.unlock() }
+        return decode(url: latestEventURL)
     }
 
     public func sessions(

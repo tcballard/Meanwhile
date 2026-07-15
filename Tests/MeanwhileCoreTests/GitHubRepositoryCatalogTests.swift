@@ -25,6 +25,25 @@ final class GitHubRepositoryCatalogTests: XCTestCase {
             ["Acme/widgets", "zeta/tools"]
         )
     }
+
+    func testAuthenticationCheckerReflectsGitHubCLIExitStatus() {
+        XCTAssertEqual(
+            GitHubAuthenticationChecker(
+                runner: CatalogCommandRunner(
+                    result: ShellCommandResult(exitCode: 0, stdout: "", stderr: "")
+                )
+            ).status(),
+            .authenticated
+        )
+        XCTAssertEqual(
+            GitHubAuthenticationChecker(
+                runner: CatalogCommandRunner(
+                    result: ShellCommandResult(exitCode: 1, stdout: "", stderr: "login required")
+                )
+            ).status(),
+            .notAuthenticated
+        )
+    }
 }
 
 private struct CatalogCommandRunner: CommandRunning {

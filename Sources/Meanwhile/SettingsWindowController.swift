@@ -17,12 +17,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             rootView: RepositorySettingsView(model: model)
         )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 680),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Meanwhile Settings"
+        window.minSize = NSSize(width: 580, height: 560)
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.delegate = self

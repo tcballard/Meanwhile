@@ -30,6 +30,7 @@ jobs:
 
       - name: Verify packaged artifacts
         run: |
-          test -f "${{ runner.temp }}/meanwhile-dist/Meanwhile-0.1.0-unsigned.zip"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' App/Info.plist)"
+          test -f "${{ runner.temp }}/meanwhile-dist/Meanwhile-${version}-unsigned.zip"
           test -f "${{ runner.temp }}/meanwhile-dist/meanwhile.rb"
           ruby -c "${{ runner.temp }}/meanwhile-dist/meanwhile.rb"
