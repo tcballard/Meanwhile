@@ -20,6 +20,8 @@ final class AgentIntegrationInstallerTests: XCTestCase {
         _ = try installer.install()
         _ = try installer.install()
 
+        XCTAssertEqual(try installer.health().state, .installed)
+
         let claude = try object(installer.claudeSettingsURL)
         XCTAssertEqual(claude["theme"] as? String, "dark")
         let hooks = try XCTUnwrap(claude["hooks"] as? [String: Any])
@@ -78,8 +80,35 @@ final class AgentIntegrationInstallerTests: XCTestCase {
         )
         let result = try installer.install()
         XCTAssertTrue(result.claudeStatuslineConflict)
+        XCTAssertTrue(try installer.health().claudeStatuslineConflict)
         let claude = try object(installer.claudeSettingsURL)
         XCTAssertEqual((claude["statusLine"] as? [String: Any])?["command"] as? String, "my-status")
+    }
+
+    func testHealthDistinguishesMissingAndPartialInstallations() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let installer = AgentIntegrationInstaller(
+            helperURL: URL(fileURLWithPath: "/tmp/MeanwhileHook"),
+            homeDirectory: home,
+            environment: [:]
+        )
+        XCTAssertEqual(try installer.health().state, .notInstalled)
+
+        try FileManager.default.createDirectory(
+            at: installer.claudeSettingsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let partial = """
+        {"hooks":{"Stop":[{"hooks":[{"command":"'/tmp/MeanwhileHook' hook --provider claude"}]}]}}
+        """
+        try Data(partial.utf8).write(to: installer.claudeSettingsURL)
+
+        let health = try installer.health()
+        XCTAssertEqual(health.state, .needsReview)
+        XCTAssertTrue(health.claudeHooksInstalled)
+        XCTAssertFalse(health.codexHooksInstalled)
     }
 
     func testHonorsClaudeAndCodexConfigurationDirectories() throws {

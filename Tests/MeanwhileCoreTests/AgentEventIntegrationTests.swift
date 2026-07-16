@@ -71,6 +71,7 @@ final class AgentEventIntegrationTests: XCTestCase {
             ),
             []
         )
+        XCTAssertEqual(store.latestEvent(), session)
     }
 
     func testNotificationPermissionPromptMapsToNeedsYou() throws {

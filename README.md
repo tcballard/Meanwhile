@@ -4,7 +4,7 @@ Meanwhile is a macOS 14 menu-bar app that turns coding-agent wait time into one
 small, actionable GitHub task. It is built in Swift 5.10 with no third-party
 dependencies.
 
-## v0.1 behavior
+## v0.1.1 behavior
 
 - Uses Claude Code and Codex lifecycle hooks—not process or CPU guesses—to track
   each session as `thinking`, `needs-you`, or `idle`.
@@ -15,7 +15,8 @@ dependencies.
 - Surfaces two sources: failing CI on your own open pull requests, then review
   requests, oldest first within each source.
 - Orders all work deterministically: needs-you, red CI, reviews, oldest first.
-- Supports 15-minute snooze and dismiss from the right-click menu.
+- Supports 15-minute snooze and **Hide Until It Changes** from the right-click
+  menu.
 - Renders the current item in the Claude Code status line when that slot is
   available.
 - Tracks parallel Claude and Codex sessions independently and filters both
@@ -32,17 +33,19 @@ Authenticate the GitHub CLI first:
 gh auth status
 ```
 
-Launch Meanwhile, then approve **Install Agent Integrations** on first run (or
-choose it later from the right-click menu). The installer merges local hooks
-into `~/.claude/settings.json` and `~/.codex/hooks.json` without replacing
-unrelated settings. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored when set.
+On first launch, Meanwhile opens Settings with integration health and one clear
+**Install or Update…** action. The installer merges local hooks into
+`~/.claude/settings.json` and `~/.codex/hooks.json` without replacing unrelated
+settings. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored when set.
 Tool-boundary hooks refresh active sessions, while active or blocked sessions
 use a separate 24-hour crash-safety expiry. If Claude already has a custom status line, Meanwhile
 preserves it and reports the conflict instead of overwriting it.
 
-Codex requires one additional trust step: open `/hooks` in Codex and approve the
-new Meanwhile hooks. Hook events and presentation state stay on the Mac under
-`~/Library/Application Support/Meanwhile`; Meanwhile adds no telemetry.
+Codex may require one additional trust step: open `/hooks` in Codex and approve
+the new Meanwhile hooks. Settings reports hook installation, GitHub
+authentication, and the last agent event so setup failures are visible. Hook
+events, the latest event, and a bounded recent-signals list stay on the Mac;
+Meanwhile adds no telemetry.
 
 Terminal focus uses the terminal metadata captured with the agent working
 directory. Terminal.app and iTerm sessions are selected by TTY; other supported
@@ -75,8 +78,15 @@ fields retain their defaults:
 }
 ```
 
-Repository selection remains in macOS user defaults and is managed through
-**Settings…** in the right-click menu.
+Repository selection, the optional global shortcut, and agent integration
+installation are managed through **Settings…** in the right-click menu. Click
+the shortcut recorder and press a modified letter, digit, Space, Tab, Return,
+or Escape. The shortcut opens the current menu-bar item, the same as clicking
+the status item.
+
+Settings also explains the menu-bar language and keeps the five newest agent,
+review, CI, snooze, hide, and installation signals visible for lightweight
+diagnosis.
 
 ## GitHub access
 
@@ -97,9 +107,9 @@ cask with:
 GITHUB_REPOSITORY="tcballard/Meanwhile" ./Scripts/release-unsigned.sh
 ```
 
-This produces `dist/Meanwhile-0.1.0-unsigned.zip` and `dist/meanwhile.rb`.
+This produces `dist/Meanwhile-0.1.1-unsigned.zip` and `dist/meanwhile.rb`.
 Publish the archive only as a GitHub **pre-release** tagged
-`v0.1.0-unsigned`. The generated cask identifies it as unsigned and tells users
+`v0.1.1-unsigned`. The generated cask identifies it as unsigned and tells users
 that Gatekeeper will block the first launch. Users who trust the build must
 explicitly remove quarantine themselves; the cask does not bypass Gatekeeper.
 
@@ -115,7 +125,7 @@ GITHUB_REPOSITORY="owner/Meanwhile" \
 ```
 
 The script builds and signs the app in a temporary local directory, then
-produces `dist/Meanwhile-0.1.0.zip` and `dist/meanwhile.rb`. It verifies the
+produces `dist/Meanwhile-0.1.1.zip` and `dist/meanwhile.rb`. It verifies the
 stapled app and a clean extraction of the final archive before returning.
 Publishing the archive, cask, and GitHub release remains an explicit
 release-owner action. Set `RELEASE_OUTPUT_DIR` to write the final artifacts

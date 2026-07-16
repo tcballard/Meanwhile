@@ -19,7 +19,32 @@ public struct AgentIntegrationInstallResult: Equatable, Sendable {
     }
 }
 
-public final class AgentIntegrationInstaller {
+public enum AgentIntegrationHealthState: Equatable, Sendable {
+    case installed
+    case needsReview
+    case notInstalled
+}
+
+public struct AgentIntegrationHealth: Equatable, Sendable {
+    public var state: AgentIntegrationHealthState
+    public var claudeHooksInstalled: Bool
+    public var codexHooksInstalled: Bool
+    public var claudeStatuslineConflict: Bool
+
+    public init(
+        state: AgentIntegrationHealthState,
+        claudeHooksInstalled: Bool,
+        codexHooksInstalled: Bool,
+        claudeStatuslineConflict: Bool
+    ) {
+        self.state = state
+        self.claudeHooksInstalled = claudeHooksInstalled
+        self.codexHooksInstalled = codexHooksInstalled
+        self.claudeStatuslineConflict = claudeStatuslineConflict
+    }
+}
+
+public final class AgentIntegrationInstaller: @unchecked Sendable {
     public let claudeSettingsURL: URL
     public let codexHooksURL: URL
     private let helperURL: URL
@@ -114,6 +139,35 @@ public final class AgentIntegrationInstaller {
         )
     }
 
+    public func health() throws -> AgentIntegrationHealth {
+        let claude = try loadObject(at: claudeSettingsURL)
+        let codex = try loadObject(at: codexHooksURL)
+        let claudeInstalled = containsMeanwhileHook(
+            in: claude["hooks"],
+            provider: .claude
+        )
+        let codexInstalled = containsMeanwhileHook(
+            in: codex["hooks"],
+            provider: .codex
+        )
+        let statuslineCommand = (claude["statusLine"] as? [String: Any])?["command"] as? String
+        let statuslineConflict = statuslineCommand != nil
+            && statuslineCommand?.contains("MeanwhileHook") != true
+
+        let state: AgentIntegrationHealthState
+        switch (claudeInstalled, codexInstalled) {
+        case (true, true): state = .installed
+        case (false, false): state = .notInstalled
+        default: state = .needsReview
+        }
+        return AgentIntegrationHealth(
+            state: state,
+            claudeHooksInstalled: claudeInstalled,
+            codexHooksInstalled: codexInstalled,
+            claudeStatuslineConflict: statuslineConflict
+        )
+    }
+
     private func command(provider: AgentProvider) -> String {
         "\(shellQuote(helperURL.path)) hook --provider \(provider.rawValue)"
     }
@@ -146,6 +200,21 @@ public final class AgentIntegrationInstaller {
         if let matcher { group["matcher"] = matcher }
         groups.append(group)
         hooks[event] = groups
+    }
+
+    private func containsMeanwhileHook(in value: Any?, provider: AgentProvider) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            if let command = dictionary["command"] as? String,
+               command.contains("MeanwhileHook"),
+               command.contains("hook --provider \(provider.rawValue)") {
+                return true
+            }
+            return dictionary.values.contains { containsMeanwhileHook(in: $0, provider: provider) }
+        }
+        if let array = value as? [Any] {
+            return array.contains { containsMeanwhileHook(in: $0, provider: provider) }
+        }
+        return false
     }
 
     private func loadObject(at url: URL) throws -> [String: Any] {

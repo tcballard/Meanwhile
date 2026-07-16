@@ -1,8 +1,14 @@
+import MeanwhileCore
 import SwiftUI
 
 struct RepositorySettingsView: View {
     @ObservedObject var model: RepositorySettingsModel
+    @AppStorage("settings.section.statusItem.expanded") private var isStatusItemExpanded = true
+    @AppStorage("settings.section.connectionHealth.expanded") private var isConnectionHealthExpanded = true
+    @AppStorage("settings.section.repositorySources.expanded") private var isRepositorySourcesExpanded = true
+    @AppStorage("settings.section.recentSignals.expanded") private var isRecentSignalsExpanded = true
     @State private var searchText = ""
+    @State private var now = Date()
 
     private var filteredRepositories: [String] {
         guard !searchText.isEmpty else { return model.availableRepositories }
@@ -12,97 +18,86 @@ struct RepositorySettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("GitHub repositories")
-                    .font(.title2.weight(.semibold))
-                Text("Choose where Meanwhile can surface reviews and failing CI.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Toggle(
-                "Include all accessible repositories",
-                isOn: Binding(
-                    get: { model.includesAllRepositories },
-                    set: model.setIncludesAllRepositories
-                )
-            )
-            .toggleStyle(.checkbox)
-
-            Divider()
-
-            HStack {
-                TextField("Filter repositories", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    model.loadRepositories(force: true)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                CollapsibleSettingsSection(
+                    title: "Status item",
+                    isExpanded: $isStatusItemExpanded
+                ) {
+                    StatusItemSettingsSection(
+                        repositoryScopeDescription: model.repositoryScopeDescription,
+                        sourceHealthDescription: model.sourceHealthDescription,
+                        sourceHasError: model.errorMessage != nil
+                    )
                 }
-                .help("Refresh repositories")
-                .disabled(model.isLoading)
+                Divider()
+                ControlsSettingsSection(
+                    hotKey: Binding(get: { model.hotKey }, set: model.setHotKey),
+                    hotKeyRegistrationError: model.hotKeyRegistrationError,
+                    setHotKeyRegistrationError: model.setHotKeyRegistrationError,
+                    isInstallingIntegrations: model.isInstallingIntegrations,
+                    integrationActionMessage: model.integrationActionMessage,
+                    integrationActionIsError: model.integrationActionIsError,
+                    installIntegrations: model.installIntegrations
+                )
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Connection health",
+                    isExpanded: $isConnectionHealthExpanded,
+                    showsProgress: model.isCheckingHealth
+                ) {
+                    ConnectionHealthSection(
+                        integrationHealth: model.integrationHealth,
+                        integrationHealthError: model.integrationHealthError,
+                        lastAgentEvent: model.lastAgentEvent,
+                        githubAuthenticationStatus: model.githubAuthenticationStatus,
+                        now: now
+                    )
+                }
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Repository sources",
+                    trailing: model.availableRepositories.isEmpty
+                        ? nil
+                        : "\(filteredRepositories.count) shown",
+                    isExpanded: $isRepositorySourcesExpanded
+                ) {
+                    RepositorySourcesSection(
+                        searchText: $searchText,
+                        includesAllRepositories: Binding(
+                            get: { model.includesAllRepositories },
+                            set: model.setIncludesAllRepositories
+                        ),
+                        availableRepositories: model.availableRepositories,
+                        filteredRepositories: filteredRepositories,
+                        isLoading: model.isLoading,
+                        errorMessage: model.errorMessage,
+                        refresh: { model.loadRepositories(force: true) },
+                        isSelected: model.isSelected,
+                        setRepository: model.setRepository
+                    )
+                }
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Recent signals",
+                    isExpanded: $isRecentSignalsExpanded
+                ) {
+                    RecentSignalsSection(signals: model.recentSignals, now: now)
+                }
             }
-
-            repositoryList
-
-            if !model.includesAllRepositories && model.selectedRepositories.isEmpty {
-                Label("No repositories are connected.", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
         }
-        .padding(20)
-        .frame(width: 460, height: 420)
+        .frame(width: 620, height: 680)
+        .background(Color(nsColor: .windowBackgroundColor))
         .task {
             model.loadRepositories()
-        }
-    }
-
-    @ViewBuilder
-    private var repositoryList: some View {
-        if model.isLoading && model.availableRepositories.isEmpty {
-            VStack(spacing: 8) {
-                ProgressView()
-                Text("Loading repositories from GitHub…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let errorMessage = model.errorMessage,
-                  model.availableRepositories.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Couldn’t load repositories")
-                    .font(.headline)
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Try Again") {
-                    model.loadRepositories(force: true)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 9) {
-                    ForEach(filteredRepositories, id: \.self) { repository in
-                        Toggle(
-                            repository,
-                            isOn: Binding(
-                                get: { model.isSelected(repository) },
-                                set: { model.setRepository(repository, isSelected: $0) }
-                            )
-                        )
-                        .toggleStyle(.checkbox)
-                        .disabled(model.includesAllRepositories)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .overlay {
-                if filteredRepositories.isEmpty {
-                    Text("No matching repositories")
-                        .foregroundStyle(.secondary)
-                }
+            model.refreshStatus()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard !Task.isCancelled else { break }
+                now = Date()
+                model.refreshStatus()
             }
         }
     }

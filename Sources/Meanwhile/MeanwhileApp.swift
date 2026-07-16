@@ -12,16 +12,41 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let repositoryPreferences = RepositoryPreferences()
     private let settingsWindowController = SettingsWindowController()
     private let terminalFocuser = TerminalFocuser()
+    private let configuration = MeanwhileConfiguration.load()
+    private let eventStore = AgentEventStore()
+    private let recentSignalStore = RecentSignalStore()
+    private lazy var integrationInstaller = AgentIntegrationInstaller(helperURL: helperURL())
+    private lazy var hotKeyPreferences = HotKeyPreferences(defaultHotKey: configuration.hotKey)
     private var menuBar: MenuBarController<EmptyView>?
     private var runtime: MeanwhileRuntime?
     private var currentItem: WorkItem?
     private var openItemMenuItem: NSMenuItem?
     private var snoozeMenuItem: NSMenuItem?
-    private var dismissMenuItem: NSMenuItem?
+    private var hideMenuItem: NSMenuItem?
+    private var hotKey: GlobalHotKey?
+    private var lastRecordedItemID: String?
     private lazy var settingsModel = RepositorySettingsModel(
         preferences: repositoryPreferences,
+        hotKeyPreferences: hotKeyPreferences,
+        integrationInstaller: integrationInstaller,
+        eventStore: eventStore,
+        recentSignalStore: recentSignalStore,
         selectionDidChange: { [weak self] in
             self?.runtime?.repositorySelectionDidChange()
+        },
+        hotKeyDidChange: { [weak self] _ in
+            self?.registerHotKeyFromPreferences()
+        },
+        integrationDidInstall: { [weak self] _ in
+            guard let self else { return }
+            UserDefaults.standard.set(true, forKey: DefaultsKey.integrationPrompted)
+            recentSignalStore.record(
+                RecentSignal(
+                    kind: .integrationsInstalled,
+                    title: "Agent integrations installed",
+                    detail: "Claude and Codex"
+                )
+            )
         }
     )
 
@@ -48,16 +73,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             repositoryIsAllowed: { preferences.allows(repository: $0) }
         )
         let runtime = MeanwhileRuntime(
+            eventStore: eventStore,
             reviewSource: reviewSource,
-            ciSource: ciSource
+            ciSource: ciSource,
+            configuration: configuration
         ) { [weak self] presentation in
             Task { @MainActor [weak self] in self?.present(presentation) }
         }
         self.runtime = runtime
         runtime.start()
+        registerHotKeyFromPreferences()
 
         DispatchQueue.main.async { [weak self] in
-            self?.offerAgentIntegrationIfNeeded()
+            self?.showFirstRunSettingsIfNeeded()
         }
     }
 
@@ -67,6 +95,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func present(_ presentation: MeanwhilePresentation) {
         currentItem = presentation.item
+        recordPresentationIfNeeded(presentation.item)
         let statusText = MenuBarPresenter.statusText(item: presentation.item)
         menuBar?.setTitle(statusText)
         menuBar?.statusItem.length = statusText == nil
@@ -98,7 +127,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         } ?? "No Item Available"
         openItemMenuItem?.isEnabled = item != nil
         snoozeMenuItem?.isEnabled = item != nil
-        dismissMenuItem?.isEnabled = item != nil
+        hideMenuItem?.isEnabled = item != nil
     }
 
     private func accessibilityDescription(for presentation: MeanwhilePresentation) -> String {
@@ -140,25 +169,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         snoozeMenuItem = snooze
         menu.addItem(snooze)
 
-        let dismiss = NSMenuItem(
-            title: "Dismiss",
-            action: #selector(dismissCurrentItem),
+        let hide = NSMenuItem(
+            title: "Hide Until It Changes",
+            action: #selector(hideCurrentItemUntilChange),
             keyEquivalent: ""
         )
-        dismiss.target = self
-        dismiss.isEnabled = false
-        dismissMenuItem = dismiss
-        menu.addItem(dismiss)
+        hide.target = self
+        hide.isEnabled = false
+        hideMenuItem = hide
+        menu.addItem(hide)
         menu.addItem(.separator())
-
-        let integrations = NSMenuItem(
-            title: "Install Agent Integrations…",
-            action: #selector(installAgentIntegrations),
-            keyEquivalent: ""
-        )
-        integrations.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
-        integrations.target = self
-        menu.addItem(integrations)
 
         let settings = NSMenuItem(
             title: "Settings…",
@@ -189,41 +209,49 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func registerHotKeyFromPreferences() {
+        hotKey = nil
+        settingsModel.setHotKeyRegistrationError(nil)
+        guard let hotKeyConfiguration = hotKeyPreferences.hotKey else { return }
+        do {
+            hotKey = try GlobalHotKey(configuration: hotKeyConfiguration) { [weak self] in
+                self?.openCurrentItem()
+            }
+        } catch {
+            settingsModel.setHotKeyRegistrationError(error.localizedDescription)
+        }
+    }
+
     @objc private func snoozeCurrentItem() {
+        if let item = currentItem {
+            recentSignalStore.record(
+                RecentSignal(
+                    kind: .snoozed,
+                    title: "Snoozed for 15 minutes",
+                    detail: item.title
+                )
+            )
+        }
         runtime?.snoozeCurrent()
     }
 
-    @objc private func dismissCurrentItem() {
+    @objc private func hideCurrentItemUntilChange() {
+        if let item = currentItem {
+            recentSignalStore.record(
+                RecentSignal(
+                    kind: .hiddenUntilChange,
+                    title: "Hidden until it changes",
+                    detail: item.title
+                )
+            )
+        }
         runtime?.dismissCurrent()
     }
 
-    @objc private func installAgentIntegrations() {
-        do {
-            let result = try AgentIntegrationInstaller(helperURL: helperURL()).install()
-            UserDefaults.standard.set(true, forKey: DefaultsKey.integrationPrompted)
-            let alert = NSAlert()
-            alert.messageText = "Agent integrations installed"
-            alert.informativeText = result.claudeStatuslineConflict
-                ? "Claude and Codex hooks are installed. Your existing Claude status line was preserved; add the MeanwhileHook statusline command manually if you want Meanwhile there too. In Codex, open /hooks once to review and trust the new hooks."
-                : "Claude and Codex hooks and the Claude status line are installed. In Codex, open /hooks once to review and trust the new hooks."
-            alert.runModal()
-        } catch {
-            let alert = NSAlert(error: error)
-            alert.runModal()
-        }
-    }
-
-    private func offerAgentIntegrationIfNeeded() {
+    private func showFirstRunSettingsIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: DefaultsKey.integrationPrompted) else { return }
         UserDefaults.standard.set(true, forKey: DefaultsKey.integrationPrompted)
-        let alert = NSAlert()
-        alert.messageText = "Connect Claude Code and Codex?"
-        alert.informativeText = "Meanwhile uses local lifecycle hooks to know when an agent is thinking or needs you. Existing hook settings are preserved."
-        alert.addButton(withTitle: "Install Integrations")
-        alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn {
-            installAgentIntegrations()
-        }
+        openSettings()
     }
 
     private func helperURL() -> URL {
@@ -236,7 +264,37 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        settingsModel.refreshStatus()
         settingsWindowController.show(model: settingsModel)
+    }
+
+    private func recordPresentationIfNeeded(_ item: WorkItem?) {
+        guard item?.id != lastRecordedItemID else { return }
+        lastRecordedItemID = item?.id
+        guard let item else { return }
+
+        let signal: RecentSignal
+        switch item.kind {
+        case .needsYou:
+            signal = RecentSignal(
+                kind: .agentNeedsYou,
+                title: item.title,
+                detail: item.detail
+            )
+        case .review:
+            signal = RecentSignal(
+                kind: .reviewSurfaced,
+                title: "\(item.title) surfaced",
+                detail: item.detail
+            )
+        case .failingCI:
+            signal = RecentSignal(
+                kind: .ciFailed,
+                title: "CI failure surfaced",
+                detail: item.detail
+            )
+        }
+        recentSignalStore.record(signal)
     }
 
     @objc private func quitMeanwhile() {
