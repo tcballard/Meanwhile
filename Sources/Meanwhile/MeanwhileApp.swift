@@ -26,6 +26,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideMenuItem: NSMenuItem?
     private var hotKey: GlobalHotKey?
     private var lastRecordedItemID: String?
+    private lazy var agentFocusRouter = AgentFocusRouter(
+        focusTerminal: { [terminalFocuser] session in
+            terminalFocuser.focus(session)
+        }
+    )
     private lazy var settingsModel = RepositorySettingsModel(
         preferences: repositoryPreferences,
         hotKeyPreferences: hotKeyPreferences,
@@ -89,6 +94,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBar.statusItem.length = NSStatusItem.squareLength
         menuBar.statusItem.button?.toolTip = "Meanwhile — waiting for an agent event"
+        menuBar.setAccessibility(label: "Meanwhile, idle")
         self.menuBar = menuBar
 
         let preferences = repositoryPreferences
@@ -135,49 +141,32 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBar?.setIcon(
             systemName: MenuBarPresenter.iconName(phase: presentation.phase),
-            accessibilityDescription: accessibilityDescription(for: presentation),
+            accessibilityDescription: nil,
             tintColor: iconColor
         )
-        menuBar?.statusItem.button?.toolTip = tooltip(for: presentation)
+        menuBar?.setAccessibility(
+            label: MenuBarPresenter.accessibilityLabel(
+                phase: presentation.phase,
+                item: presentation.item
+            ),
+            help: MenuBarPresenter.accessibilityHelp(
+                phase: presentation.phase,
+                item: presentation.item
+            )
+        )
+        menuBar?.statusItem.button?.toolTip = MenuBarPresenter.tooltip(
+            phase: presentation.phase,
+            item: presentation.item
+        )
         updateItemMenu(presentation.item)
     }
 
     private func updateItemMenu(_ item: WorkItem?) {
-        openItemMenuItem?.title = item.map { item in
-            switch item.kind {
-            case .review, .failingCI:
-                return "Open \(item.title) — \(item.detail)"
-            case .needsYou:
-                return "Open \(item.title)"
-            }
-        } ?? "No Item Available"
+        openItemMenuItem?.title = item.map(MenuBarPresenter.openActionTitle(item:))
+            ?? "No Item Available"
         openItemMenuItem?.isEnabled = item != nil
         snoozeMenuItem?.isEnabled = item != nil
         hideMenuItem?.isEnabled = item != nil
-    }
-
-    private func accessibilityDescription(for presentation: MeanwhilePresentation) -> String {
-        switch presentation.phase {
-        case .idle: return "Meanwhile — idle"
-        case .thinking: return "Meanwhile — agent thinking"
-        case .needsYou:
-            return presentation.item.map { "Meanwhile — \($0.title)" }
-                ?? "Meanwhile — agent needs you"
-        }
-    }
-
-    private func tooltip(for presentation: MeanwhilePresentation) -> String {
-        if let item = presentation.item {
-            if item.kind == .needsYou {
-                return "\(item.title) — click to return"
-            }
-            return "\(item.title): \(item.detail)"
-        }
-        switch presentation.phase {
-        case .idle: return "Meanwhile — idle"
-        case .thinking: return "Agent thinking — no eligible items"
-        case .needsYou: return "Agent needs you"
-        }
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -236,10 +225,33 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openCurrentItem() {
         guard let item = currentItem else { return }
         if item.kind == .needsYou, let session = item.session {
-            _ = terminalFocuser.focus(session)
+            if agentFocusRouter.focus(session) == .unavailable {
+                showFocusFailure(for: item)
+            }
         } else if let url = item.url {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func showFocusFailure(for item: WorkItem) {
+        let provider = item.session.map { providerDisplayName($0.provider) } ?? "agent"
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t return to \(provider)"
+        if item.session?.provider == .codex {
+            alert.informativeText = """
+            Meanwhile couldn’t open this task in Codex or focus its original terminal. \
+            The interruption is still active.
+            """
+        } else {
+            alert.informativeText = """
+            Meanwhile couldn’t focus this task’s original terminal. \
+            The interruption is still active.
+            """
+        }
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func registerHotKeyFromPreferences() {
