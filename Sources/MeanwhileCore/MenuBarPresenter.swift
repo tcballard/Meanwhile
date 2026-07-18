@@ -14,7 +14,7 @@ public enum MenuBarPresenter {
     public static func statusText(item: WorkItem?) -> String? {
         guard let item else { return nil }
         switch item.kind {
-        case .needsYou: return "Needs you"
+        case .needsYou: return item.title
         case .failingCI: return "CI!"
         case .review:
             let number = item.title.split(separator: "#").last.map(String.init)

@@ -11,7 +11,14 @@ final class MenuBarPresenterTests: XCTestCase {
 
     func testFormatsEachItemKindCompactly() {
         XCTAssertNil(MenuBarPresenter.statusText(item: nil))
-        XCTAssertEqual(MenuBarPresenter.statusText(item: item(.needsYou, title: "Claude needs you")), "Needs you")
+        XCTAssertEqual(
+            MenuBarPresenter.statusText(item: item(.needsYou, title: "Claude needs you")),
+            "Claude needs you"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.statusText(item: item(.needsYou, title: "Codex needs you")),
+            "Codex needs you"
+        )
         XCTAssertEqual(MenuBarPresenter.statusText(item: item(.failingCI, title: "CI failed on #4")), "CI!")
         XCTAssertEqual(MenuBarPresenter.statusText(item: item(.review, title: "Review #78")), "#78")
     }

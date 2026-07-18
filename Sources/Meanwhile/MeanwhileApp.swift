@@ -160,12 +160,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         switch presentation.phase {
         case .idle: return "Meanwhile — idle"
         case .thinking: return "Meanwhile — agent thinking"
-        case .needsYou: return "Meanwhile — agent needs you"
+        case .needsYou:
+            return presentation.item.map { "Meanwhile — \($0.title)" }
+                ?? "Meanwhile — agent needs you"
         }
     }
 
     private func tooltip(for presentation: MeanwhilePresentation) -> String {
-        if let item = presentation.item { return "\(item.title): \(item.detail)" }
+        if let item = presentation.item {
+            if item.kind == .needsYou {
+                return "\(item.title) — click to return"
+            }
+            return "\(item.title): \(item.detail)"
+        }
         switch presentation.phase {
         case .idle: return "Meanwhile — idle"
         case .thinking: return "Agent thinking — no eligible items"
