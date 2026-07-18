@@ -9,6 +9,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         static let integrationPrompted = "Meanwhile.agentIntegrationPrompted"
     }
 
+    private static let statusItemBloomDuration: TimeInterval = 6
+
     private let repositoryPreferences = RepositoryPreferences()
     private let settingsWindowController = SettingsWindowController()
     private let terminalFocuser = TerminalFocuser()
@@ -26,6 +28,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideMenuItem: NSMenuItem?
     private var hotKey: GlobalHotKey?
     private var lastRecordedItemID: String?
+    private var latestPresentation: MeanwhilePresentation?
+    private var bloomState = StatusItemBloomState()
+    private var bloomExpirationWorkItem: DispatchWorkItem?
+    private var pendingBloomSettlement = false
     private lazy var agentFocusRouter = AgentFocusRouter(
         focusTerminal: { [terminalFocuser] session in
             terminalFocuser.focus(session)
@@ -95,6 +101,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.statusItem.length = NSStatusItem.squareLength
         menuBar.statusItem.button?.toolTip = "Meanwhile — waiting for an agent event"
         menuBar.setAccessibility(label: "Meanwhile, idle")
+        menuBar.onContextMenuClose = { [weak self] in
+            self?.settleBloomAfterContextMenuIfNeeded()
+        }
         self.menuBar = menuBar
 
         let preferences = repositoryPreferences
@@ -122,13 +131,47 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        bloomExpirationWorkItem?.cancel()
         runtime?.stop()
     }
 
     private func present(_ presentation: MeanwhilePresentation) {
+        latestPresentation = presentation
         currentItem = presentation.item
         recordPresentationIfNeeded(presentation.item)
-        let statusText = MenuBarPresenter.statusText(item: presentation.item)
+        let transition = bloomState.observe(
+            phase: presentation.phase,
+            item: presentation.item
+        )
+        switch transition {
+        case .none:
+            if pendingBloomSettlement,
+               menuBar?.isContextMenuTracking == true {
+                return
+            }
+            pendingBloomSettlement = false
+            render(presentation, isBlooming: bloomState.isActive)
+        case .start(let itemID, let generation):
+            bloomExpirationWorkItem?.cancel()
+            pendingBloomSettlement = false
+            render(presentation, isBlooming: true)
+            announceCurrentAttention(presentation)
+            scheduleBloomExpiration(itemID: itemID, generation: generation)
+        case .cancel:
+            bloomExpirationWorkItem?.cancel()
+            bloomExpirationWorkItem = nil
+            pendingBloomSettlement = false
+            render(presentation, isBlooming: false)
+        }
+    }
+
+    private func render(
+        _ presentation: MeanwhilePresentation,
+        isBlooming: Bool
+    ) {
+        let statusText = isBlooming
+            ? MenuBarPresenter.bloomText(item: presentation.item)
+            : MenuBarPresenter.statusText(item: presentation.item)
         menuBar?.setTitle(statusText)
         menuBar?.statusItem.length = statusText == nil
             ? NSStatusItem.squareLength
@@ -159,6 +202,55 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             item: presentation.item
         )
         updateItemMenu(presentation.item)
+    }
+
+    private func scheduleBloomExpiration(itemID: String, generation: UInt64) {
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.expireBloom(itemID: itemID, generation: generation)
+            }
+        }
+        bloomExpirationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.statusItemBloomDuration,
+            execute: workItem
+        )
+    }
+
+    private func expireBloom(itemID: String, generation: UInt64) {
+        guard bloomState.expire(itemID: itemID, generation: generation) else { return }
+        bloomExpirationWorkItem = nil
+        guard menuBar?.isContextMenuTracking != true else {
+            pendingBloomSettlement = true
+            return
+        }
+        if let latestPresentation {
+            render(latestPresentation, isBlooming: false)
+        }
+    }
+
+    private func settleBloomAfterContextMenuIfNeeded() {
+        guard pendingBloomSettlement else { return }
+        pendingBloomSettlement = false
+        if let latestPresentation {
+            render(latestPresentation, isBlooming: bloomState.isActive)
+        }
+    }
+
+    private func settleBloomBeforeAction() {
+        bloomExpirationWorkItem?.cancel()
+        bloomExpirationWorkItem = nil
+        pendingBloomSettlement = false
+        guard bloomState.settle(), let latestPresentation else { return }
+        render(latestPresentation, isBlooming: false)
+    }
+
+    private func announceCurrentAttention(_ presentation: MeanwhilePresentation) {
+        let label = MenuBarPresenter.accessibilityLabel(
+            phase: presentation.phase,
+            item: presentation.item
+        )
+        menuBar?.announce(label)
     }
 
     private func updateItemMenu(_ item: WorkItem?) {
@@ -224,6 +316,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openCurrentItem() {
         guard let item = currentItem else { return }
+        settleBloomBeforeAction()
         if item.kind == .needsYou, let session = item.session {
             if agentFocusRouter.focus(session) == .unavailable {
                 showFocusFailure(for: item)
@@ -268,6 +361,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func snoozeCurrentItem() {
+        settleBloomBeforeAction()
         if let item = currentItem {
             recentSignalStore.record(
                 RecentSignal(
@@ -281,6 +375,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func hideCurrentItemUntilChange() {
+        settleBloomBeforeAction()
         if let item = currentItem {
             recentSignalStore.record(
                 RecentSignal(
@@ -323,7 +418,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         case .needsYou:
             signal = RecentSignal(
                 kind: .agentNeedsYou,
-                title: item.title,
+                title: MenuBarPresenter.attentionText(item: item),
                 detail: item.detail
             )
         case .review:

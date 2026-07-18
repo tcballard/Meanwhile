@@ -29,7 +29,7 @@ struct StatusItemSettingsSection: View {
                     systemImage: "exclamationmark.bubble.fill",
                     tint: .red,
                     label: "Codex needs you",
-                    meaning: "Click to return; hover for the project"
+                    meaning: "Briefly shows why and where; click to return"
                 )
                 StatusLanguageRow(
                     systemImage: "rectangle.stack.fill",

@@ -6,6 +6,8 @@ import SwiftUI
 public final class MenuBarController<Content: View>: NSObject, NSMenuDelegate {
     public let statusItem: NSStatusItem
     public let popover: NSPopover
+    public private(set) var isContextMenuTracking = false
+    public var onContextMenuClose: (() -> Void)?
     private let onClick: (() -> Void)?
     private let contextMenu: NSMenu?
 
@@ -76,6 +78,17 @@ public final class MenuBarController<Content: View>: NSObject, NSMenuDelegate {
         statusItem.button?.setAccessibilityHelp(help)
     }
 
+    public func announce(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
+    }
+
     public func showPopover() {
         guard let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -111,9 +124,17 @@ public final class MenuBarController<Content: View>: NSObject, NSMenuDelegate {
         }
     }
 
+    public func menuWillOpen(_ menu: NSMenu) {
+        if menu === contextMenu {
+            isContextMenuTracking = true
+        }
+    }
+
     public func menuDidClose(_ menu: NSMenu) {
         if menu === contextMenu {
+            isContextMenuTracking = false
             statusItem.menu = nil
+            onContextMenuClose?()
         }
     }
 }

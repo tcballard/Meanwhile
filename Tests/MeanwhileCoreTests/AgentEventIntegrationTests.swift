@@ -38,13 +38,23 @@ final class AgentEventIntegrationTests: XCTestCase {
             previous: afterTool
         )
         XCTAssertEqual(permission.phase, .needsYou)
+        XCTAssertEqual(permission.attentionReason, .approvalRequired)
         XCTAssertEqual(permission.enteredAt, start.addingTimeInterval(3))
+
+        let repeatedPermission = try HookEventDecoder.decode(
+            payload(event: "PermissionRequest"),
+            provider: .claude,
+            now: start.addingTimeInterval(3.5),
+            previous: permission
+        )
+        XCTAssertEqual(repeatedPermission.enteredAt, permission.enteredAt)
 
         let idle = try HookEventDecoder.decode(
             payload(event: "Stop"), provider: .claude,
-            now: start.addingTimeInterval(4), previous: permission
+            now: start.addingTimeInterval(4), previous: repeatedPermission
         )
         XCTAssertEqual(idle.phase, .idle)
+        XCTAssertNil(idle.attentionReason)
     }
 
     func testEventStoreRoundTripsAndRemovesStaleSessions() throws {
@@ -55,7 +65,8 @@ final class AgentEventIntegrationTests: XCTestCase {
         let start = Date(timeIntervalSince1970: 2_000)
         let session = AgentSessionState(
             provider: .codex, sessionID: "unsafe/session+id", cwd: "/tmp",
-            phase: .thinking, enteredAt: start, updatedAt: start
+            phase: .needsYou, attentionReason: .approvalRequired,
+            enteredAt: start, updatedAt: start
         )
         try store.write(session)
         XCTAssertEqual(store.session(provider: .codex, sessionID: session.sessionID), session)
@@ -127,19 +138,120 @@ final class AgentEventIntegrationTests: XCTestCase {
         XCTAssertEqual(store.latestEvent(), stuck)
     }
 
-    func testNotificationPermissionPromptMapsToNeedsYou() throws {
-        let data = """
-        {"session_id":"abc","cwd":"/tmp","hook_event_name":"Notification","notification_type":"permission_prompt"}
-        """.data(using: .utf8)!
-        XCTAssertEqual(
-            try HookEventDecoder.decode(data, provider: .claude).phase,
-            .needsYou
+    func testSupportedNotificationsMapToCoarseAttentionReasons() throws {
+        let expectations: [(String, AgentAttentionReason)] = [
+            ("permission_prompt", .approvalRequired),
+            ("idle_prompt", .answerRequired),
+            ("elicitation_dialog", .answerRequired)
+        ]
+
+        for (notificationType, reason) in expectations {
+            let data = """
+            {"session_id":"abc","cwd":"/tmp","hook_event_name":"Notification","notification_type":"\(notificationType)"}
+            """.data(using: .utf8)!
+            let state = try HookEventDecoder.decode(data, provider: .claude)
+            XCTAssertEqual(state.phase, .needsYou)
+            XCTAssertEqual(state.attentionReason, reason)
+        }
+    }
+
+    func testChangedAttentionReasonResetsEntryTime() throws {
+        let start = Date(timeIntervalSince1970: 4_000)
+        let approval = try HookEventDecoder.decode(
+            payload(event: "PermissionRequest"),
+            provider: .claude,
+            now: start
         )
+        let answerData = """
+        {"session_id":"abc","cwd":"/tmp/repo","hook_event_name":"Notification","notification_type":"elicitation_dialog"}
+        """.data(using: .utf8)!
+        let answer = try HookEventDecoder.decode(
+            answerData,
+            provider: .claude,
+            now: start.addingTimeInterval(10),
+            previous: approval
+        )
+
+        XCTAssertEqual(answer.attentionReason, .answerRequired)
+        XCTAssertEqual(answer.enteredAt, start.addingTimeInterval(10))
+    }
+
+    func testLegacyAndUnknownStoredReasonsRemainVisible() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AgentEventStore(directory: directory)
+        let session = AgentSessionState(
+            provider: .claude,
+            sessionID: "legacy",
+            cwd: "/tmp/repo",
+            phase: .needsYou,
+            attentionReason: .approvalRequired,
+            enteredAt: Date(timeIntervalSince1970: 5_000),
+            updatedAt: Date(timeIntervalSince1970: 5_000)
+        )
+        try store.write(session)
+
+        try rewriteStoredSessions(in: directory) { object in
+            object.removeValue(forKey: "attentionReason")
+        }
+        XCTAssertEqual(
+            store.session(provider: .claude, sessionID: session.sessionID)?
+                .effectiveAttentionReason,
+            .generic
+        )
+        XCTAssertEqual(store.latestEvent()?.effectiveAttentionReason, .generic)
+
+        try store.write(session)
+        try rewriteStoredSessions(in: directory) { object in
+            object["attentionReason"] = "future-reason"
+        }
+        XCTAssertEqual(
+            store.session(provider: .claude, sessionID: session.sessionID)?
+                .effectiveAttentionReason,
+            .generic
+        )
+    }
+
+    func testHookPayloadContentIsNeverPersistedInSessionState() throws {
+        let sentinel = "DO-NOT-PERSIST-THIS"
+        let data = """
+        {
+          "session_id":"abc",
+          "cwd":"/tmp/repo",
+          "hook_event_name":"PermissionRequest",
+          "message":"\(sentinel)",
+          "title":"\(sentinel)",
+          "tool_input":{"command":"\(sentinel)"}
+        }
+        """.data(using: .utf8)!
+        let state = try HookEventDecoder.decode(data, provider: .codex)
+        let encoded = try JSONEncoder().encode(state)
+
+        XCTAssertEqual(state.attentionReason, .approvalRequired)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains(sentinel))
     }
 
     private func payload(event: String) -> Data {
         """
         {"session_id":"abc","cwd":"/tmp/repo","hook_event_name":"\(event)"}
         """.data(using: .utf8)!
+    }
+
+    private func rewriteStoredSessions(
+        in directory: URL,
+        mutate: (inout [String: Any]) -> Void
+    ) throws {
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "json" }
+        for url in urls {
+            var object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+            )
+            mutate(&object)
+            try JSONSerialization.data(withJSONObject: object).write(to: url, options: .atomic)
+        }
     }
 }
