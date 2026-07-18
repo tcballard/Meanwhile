@@ -45,7 +45,7 @@ public final class MenuBarController<Content: View>: NSObject, NSMenuDelegate {
 
     public func setIcon(
         systemName: String?,
-        accessibilityDescription: String = "Peripheral",
+        accessibilityDescription: String? = "Peripheral",
         tintColor: NSColor? = nil
     ) {
         guard let systemName else {
@@ -69,6 +69,11 @@ public final class MenuBarController<Content: View>: NSObject, NSMenuDelegate {
         }
         statusItem.button?.image = image
         updateImagePosition()
+    }
+
+    public func setAccessibility(label: String, help: String? = nil) {
+        statusItem.button?.setAccessibilityLabel(label)
+        statusItem.button?.setAccessibilityHelp(help)
     }
 
     public func showPopover() {

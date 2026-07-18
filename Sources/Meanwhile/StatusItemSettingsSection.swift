@@ -28,8 +28,8 @@ struct StatusItemSettingsSection: View {
                 StatusLanguageRow(
                     systemImage: "exclamationmark.bubble.fill",
                     tint: .red,
-                    label: "Needs you",
-                    meaning: "An agent is blocked on you"
+                    label: "Codex needs you",
+                    meaning: "Click to return; hover for the project"
                 )
                 StatusLanguageRow(
                     systemImage: "rectangle.stack.fill",

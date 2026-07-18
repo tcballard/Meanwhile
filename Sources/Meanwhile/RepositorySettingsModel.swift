@@ -24,6 +24,19 @@ final class RepositorySettingsModel: ObservableObject {
     @Published private(set) var githubAuthenticationStatus: GitHubAuthenticationStatus = .notAuthenticated
     @Published private(set) var lastAgentEvent: AgentSessionState?
     @Published private(set) var recentSignals: [RecentSignal] = []
+    @Published private(set) var launchAtLoginStatus: LaunchAtLoginStatus
+    @Published private(set) var launchAtLoginError: String?
+    @Published private(set) var updateState: ReleaseUpdateState = .notChecked
+    @Published private(set) var updateErrorMessage: String?
+    @Published private(set) var diagnosticsCopyMessage: String?
+    @Published private(set) var diagnosticsCopyIsError = false
+    @Published private(set) var sessionInspection = AgentSessionInspection.empty
+    @Published private(set) var sessionRecoveryMessage: String?
+    @Published private(set) var sessionRecoveryIsError = false
+    @Published private(set) var isClearingStuckSessions = false
+
+    let appVersion: String
+    let buildVersion: String
 
     var connectedRepositoryCount: Int {
         includesAllRepositories ? availableRepositories.count : selectedRepositories.count
@@ -59,6 +72,15 @@ final class RepositorySettingsModel: ObservableObject {
         return "Reviews and failing CI ready"
     }
 
+    var sessionStaleAfterDescription: String {
+        let minutes = max(1, Int(sessionStaleAfter / 60))
+        if minutes.isMultiple(of: 60) {
+            let hours = minutes / 60
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        }
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+
     private let preferences: RepositoryPreferences
     private let hotKeyPreferences: HotKeyPreferences
     private let catalog: GitHubRepositoryCatalog
@@ -66,10 +88,19 @@ final class RepositorySettingsModel: ObservableObject {
     private let integrationInstaller: AgentIntegrationInstaller
     private let eventStore: AgentEventStore
     private let recentSignalStore: RecentSignalStore
+    private let releaseUpdateChecker: ReleaseUpdateChecker
+    private let sessionStaleAfter: TimeInterval
+    private let operatingSystemVersion: String
+    private let launchAtLoginStatusProvider: () -> LaunchAtLoginStatus
+    private let launchAtLoginSetter: (Bool) throws -> LaunchAtLoginStatus
+    private let openLoginItemsSettingsAction: () -> Void
+    private let copyText: (String) -> Bool
+    private let openURL: (URL) -> Void
     private let selectionDidChange: () -> Void
     private let hotKeyDidChange: (HotKeyConfiguration?) -> Void
     private let integrationDidInstall: (AgentIntegrationInstallResult) -> Void
     private var hasLoaded = false
+    private var diagnosticsFeedbackID = UUID()
 
     init(
         preferences: RepositoryPreferences,
@@ -79,6 +110,16 @@ final class RepositorySettingsModel: ObservableObject {
         integrationInstaller: AgentIntegrationInstaller,
         eventStore: AgentEventStore,
         recentSignalStore: RecentSignalStore,
+        releaseUpdateChecker: ReleaseUpdateChecker = ReleaseUpdateChecker(),
+        sessionStaleAfter: TimeInterval,
+        appVersion: String,
+        buildVersion: String,
+        operatingSystemVersion: String,
+        launchAtLoginStatus: @escaping () -> LaunchAtLoginStatus,
+        setLaunchAtLoginEnabled: @escaping (Bool) throws -> LaunchAtLoginStatus,
+        openLoginItemsSettings: @escaping () -> Void,
+        copyText: @escaping (String) -> Bool,
+        openURL: @escaping (URL) -> Void,
         selectionDidChange: @escaping () -> Void,
         hotKeyDidChange: @escaping (HotKeyConfiguration?) -> Void,
         integrationDidInstall: @escaping (AgentIntegrationInstallResult) -> Void
@@ -90,6 +131,16 @@ final class RepositorySettingsModel: ObservableObject {
         self.integrationInstaller = integrationInstaller
         self.eventStore = eventStore
         self.recentSignalStore = recentSignalStore
+        self.releaseUpdateChecker = releaseUpdateChecker
+        self.sessionStaleAfter = sessionStaleAfter
+        self.appVersion = appVersion
+        self.buildVersion = buildVersion
+        self.operatingSystemVersion = operatingSystemVersion
+        launchAtLoginStatusProvider = launchAtLoginStatus
+        launchAtLoginSetter = setLaunchAtLoginEnabled
+        openLoginItemsSettingsAction = openLoginItemsSettings
+        self.copyText = copyText
+        self.openURL = openURL
         self.selectionDidChange = selectionDidChange
         self.hotKeyDidChange = hotKeyDidChange
         self.integrationDidInstall = integrationDidInstall
@@ -97,6 +148,7 @@ final class RepositorySettingsModel: ObservableObject {
         includesAllRepositories = snapshot.includesAllRepositories
         selectedRepositories = snapshot.selectedRepositories
         hotKey = hotKeyPreferences.hotKey
+        self.launchAtLoginStatus = launchAtLoginStatus()
     }
 
     func loadRepositories(force: Bool = false) {
@@ -132,12 +184,14 @@ final class RepositorySettingsModel: ObservableObject {
         let integrationInstaller = self.integrationInstaller
         let eventStore = self.eventStore
         let recentSignalStore = self.recentSignalStore
+        let sessionStaleAfter = self.sessionStaleAfter
 
         Task.detached {
             let healthResult = Result { try integrationInstaller.health() }
             let authenticationStatus = authenticationChecker.status()
             let latestEvent = eventStore.latestEvent()
             let signals = recentSignalStore.signals
+            let sessionInspection = eventStore.inspectSessions(staleAfter: sessionStaleAfter)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 switch healthResult {
@@ -156,8 +210,127 @@ final class RepositorySettingsModel: ObservableObject {
                 githubAuthenticationStatus = authenticationStatus
                 lastAgentEvent = latestEvent
                 recentSignals = signals
+                if self.sessionInspection != sessionInspection {
+                    sessionRecoveryMessage = nil
+                    sessionRecoveryIsError = false
+                }
+                self.sessionInspection = sessionInspection
+                launchAtLoginStatus = launchAtLoginStatusProvider()
                 isCheckingHealth = false
             }
+        }
+    }
+
+    func checkForUpdates() {
+        guard updateState != .checking else { return }
+        updateState = .checking
+        updateErrorMessage = nil
+        let checker = releaseUpdateChecker
+        let currentVersion = appVersion
+
+        Task.detached {
+            let result = Result {
+                try checker.check(currentVersion: currentVersion)
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let state):
+                    updateState = state
+                case .failure(let error):
+                    updateState = .unavailable
+                    updateErrorMessage = (
+                        error as? ReleaseUpdateCheckerError
+                    )?.localizedDescription
+                        ?? "Could not check GitHub releases. Confirm the GitHub CLI is installed and authenticated."
+                }
+            }
+        }
+    }
+
+    func setLaunchAtLoginEnabled(_ enabled: Bool) {
+        launchAtLoginError = nil
+        do {
+            launchAtLoginStatus = try launchAtLoginSetter(enabled)
+        } catch {
+            launchAtLoginStatus = launchAtLoginStatusProvider()
+            launchAtLoginError =
+                "Meanwhile could not change this Login Item. Open Login Items in System Settings and try again."
+        }
+    }
+
+    func openLoginItemsSettings() {
+        openLoginItemsSettingsAction()
+    }
+
+    func openLatestRelease() {
+        guard let releaseURL = updateState.releaseURL else { return }
+        openURL(releaseURL)
+    }
+
+    func clearStuckSessions() {
+        guard !isClearingStuckSessions, sessionInspection.stuckCount > 0 else { return }
+        isClearingStuckSessions = true
+        sessionRecoveryMessage = nil
+        sessionRecoveryIsError = false
+        let eventStore = self.eventStore
+        let staleAfter = sessionStaleAfter
+
+        Task.detached {
+            let result = Result {
+                try eventStore.clearStuckSessions(staleAfter: staleAfter)
+            }
+            let inspection = eventStore.inspectSessions(staleAfter: staleAfter)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                isClearingStuckSessions = false
+                sessionInspection = inspection
+                switch result {
+                case .success(let count):
+                    let message = count == 1
+                        ? "Cleared 1 stuck session."
+                        : "Cleared \(count) stuck sessions."
+                    sessionRecoveryMessage = message
+                    Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        guard self?.sessionRecoveryMessage == message else { return }
+                        self?.sessionRecoveryMessage = nil
+                    }
+                case .failure:
+                    sessionRecoveryMessage = "Meanwhile could not clear every stuck session."
+                    sessionRecoveryIsError = true
+                }
+            }
+        }
+    }
+
+    func copyDiagnostics() {
+        let snapshot = DiagnosticsSnapshot(
+            appVersion: appVersion,
+            buildVersion: buildVersion,
+            operatingSystemVersion: operatingSystemVersion,
+            launchAtLoginStatus: launchAtLoginStatus,
+            updateState: updateState,
+            integrationHealth: integrationHealth,
+            githubAuthenticationStatus: githubAuthenticationStatus,
+            repositoryScopeIncludesAll: includesAllRepositories,
+            accessibleRepositoryCount: availableRepositories.count,
+            selectedRepositoryCount: selectedRepositories.count,
+            hotKeyConfigured: hotKey != nil,
+            sessionInspection: sessionInspection,
+            lastAgentEvent: lastAgentEvent,
+            recentSignals: recentSignals
+        )
+        let copied = copyText(MeanwhileDiagnosticsReport.make(snapshot: snapshot))
+        let feedbackID = UUID()
+        diagnosticsFeedbackID = feedbackID
+        diagnosticsCopyMessage = copied ? "Copied" : "Try Again"
+        diagnosticsCopyIsError = !copied
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard self?.diagnosticsFeedbackID == feedbackID else { return }
+            self?.diagnosticsCopyMessage = nil
+            self?.diagnosticsCopyIsError = false
         }
     }
 

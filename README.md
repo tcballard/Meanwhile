@@ -4,7 +4,7 @@ Meanwhile is a macOS 14 menu-bar app that turns coding-agent wait time into one
 small, actionable GitHub task. It is built in Swift 5.10 with no third-party
 dependencies.
 
-## v0.1.1 behavior
+## v0.1.2 behavior
 
 - Uses Claude Code and Codex lifecycle hooks—not process or CPU guesses—to track
   each session as `thinking`, `needs-you`, or `idle`.
@@ -21,6 +21,15 @@ dependencies.
   available.
 - Tracks parallel Claude and Codex sessions independently and filters both
   GitHub sources using the repository settings.
+- Offers a native **Launch at Login** switch that reflects macOS's real Login
+  Items state, including approval when the system requires it.
+- Shows the installed version and latest GitHub release in Settings without
+  downloading or installing anything automatically.
+- Identifies agent sessions that may be stuck and lets you clear only those
+  sessions after confirmation.
+- Copies a privacy-safe diagnostics report with coarse state, counts, and
+  timestamps—never repository names, paths, prompts, session IDs, or
+  credentials.
 
 The wait-gate is the invariant: ordinary items never appear while no agent is
 thinking.
@@ -38,14 +47,17 @@ On first launch, Meanwhile opens Settings with integration health and one clear
 `~/.claude/settings.json` and `~/.codex/hooks.json` without replacing unrelated
 settings. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored when set.
 Tool-boundary hooks refresh active sessions, while active or blocked sessions
-use a separate 24-hour crash-safety expiry. If Claude already has a custom status line, Meanwhile
-preserves it and reports the conflict instead of overwriting it.
+use a separate 24-hour crash-safety expiry. Settings flags non-idle sessions
+that have not received an event for the configured stale interval and provides
+an explicit recovery action. If Claude already has a custom status line,
+Meanwhile preserves it and reports the conflict instead of overwriting it.
 
 Codex may require one additional trust step: open `/hooks` in Codex and approve
 the new Meanwhile hooks. Settings reports hook installation, GitHub
 authentication, and the last agent event so setup failures are visible. Hook
 events, the latest event, and a bounded recent-signals list stay on the Mac;
-Meanwhile adds no telemetry.
+Meanwhile adds no telemetry. Launch at login uses macOS Service Management and
+can be changed directly in Settings.
 
 Terminal focus uses the terminal metadata captured with the agent working
 directory. Terminal.app and iTerm sessions are selected by TTY; other supported
@@ -78,11 +90,12 @@ fields retain their defaults:
 }
 ```
 
-Repository selection, the optional global shortcut, and agent integration
-installation are managed through **Settings…** in the right-click menu. Click
-the shortcut recorder and press a modified letter, digit, Space, Tab, Return,
-or Escape. The shortcut opens the current menu-bar item, the same as clicking
-the status item.
+Repository selection, launch at login, the optional global shortcut, agent
+integration installation, update visibility, diagnostics, and stuck-session
+recovery are managed through **Settings…** in the right-click menu. Click the
+shortcut recorder and press a modified letter, digit, Space, Tab, Return, or
+Escape. The shortcut opens the current menu-bar item, the same as clicking the
+status item.
 
 Settings also explains the menu-bar language and keeps the five newest agent,
 review, CI, snooze, hide, and installation signals visible for lightweight
@@ -107,9 +120,9 @@ cask with:
 GITHUB_REPOSITORY="tcballard/Meanwhile" ./Scripts/release-unsigned.sh
 ```
 
-This produces `dist/Meanwhile-0.1.1-unsigned.zip` and `dist/meanwhile.rb`.
+This produces `dist/Meanwhile-0.1.2-unsigned.zip` and `dist/meanwhile.rb`.
 Publish the archive only as a GitHub **pre-release** tagged
-`v0.1.1-unsigned`. The generated cask identifies it as unsigned and tells users
+`v0.1.2-unsigned`. The generated cask identifies it as unsigned and tells users
 that Gatekeeper will block the first launch. Users who trust the build must
 explicitly remove quarantine themselves; the cask does not bypass Gatekeeper.
 
@@ -125,7 +138,7 @@ GITHUB_REPOSITORY="owner/Meanwhile" \
 ```
 
 The script builds and signs the app in a temporary local directory, then
-produces `dist/Meanwhile-0.1.1.zip` and `dist/meanwhile.rb`. It verifies the
+produces `dist/Meanwhile-0.1.2.zip` and `dist/meanwhile.rb`. It verifies the
 stapled app and a clean extraction of the final archive before returning.
 Publishing the archive, cask, and GitHub release remains an explicit
 release-owner action. Set `RELEASE_OUTPUT_DIR` to write the final artifacts

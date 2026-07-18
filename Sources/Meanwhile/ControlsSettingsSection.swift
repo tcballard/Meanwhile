@@ -9,6 +9,10 @@ struct ControlsSettingsSection: View {
     let integrationActionMessage: String?
     let integrationActionIsError: Bool
     let installIntegrations: () -> Void
+    let launchAtLoginStatus: LaunchAtLoginStatus
+    let launchAtLoginError: String?
+    let setLaunchAtLoginEnabled: (Bool) -> Void
+    let openLoginItemsSettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -48,6 +52,48 @@ struct ControlsSettingsSection: View {
                     .padding(.leading, 142)
             }
 
+            HStack(alignment: .top, spacing: 10) {
+                Text("Launch at login")
+                    .frame(width: 132, alignment: .leading)
+
+                Toggle(
+                    "Launch Meanwhile when you log in",
+                    isOn: Binding(
+                        get: { launchAtLoginStatus.isRequested },
+                        set: { setLaunchAtLoginEnabled($0) }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityHint("Controls whether Meanwhile opens automatically after login.")
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(launchAtLoginTitle)
+                        .font(.callout.weight(.medium))
+                    Text(launchAtLoginDetail)
+                        .font(.caption)
+                        .foregroundStyle(
+                            launchAtLoginStatus == .requiresApproval || launchAtLoginError != nil
+                                ? .orange
+                                : .secondary
+                        )
+                }
+
+                Spacer(minLength: 8)
+
+                if launchAtLoginStatus == .requiresApproval || launchAtLoginError != nil {
+                    Button("Open Login Items…", action: openLoginItemsSettings)
+                }
+            }
+
+            if let launchAtLoginError {
+                SettingsInlineMessage(
+                    launchAtLoginError,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange
+                )
+            }
+
             HStack(spacing: 10) {
                 Text("Agent integrations")
                     .frame(width: 132, alignment: .leading)
@@ -78,5 +124,33 @@ struct ControlsSettingsSection: View {
                 .padding(.leading, 142)
             }
         }
+    }
+
+    private var launchAtLoginTitle: String {
+        switch launchAtLoginStatus {
+        case .disabled: return "Off"
+        case .enabled: return "On"
+        case .requiresApproval: return "Approval needed"
+        case .unavailable: return "Unavailable"
+        }
+    }
+
+    private var launchAtLoginDetail: String {
+        switch launchAtLoginStatus {
+        case .disabled:
+            return "Meanwhile opens only when you launch it."
+        case .enabled:
+            return "Meanwhile will be ready after your next login."
+        case .requiresApproval:
+            return "Allow Meanwhile in System Settings to finish enabling it."
+        case .unavailable:
+            return "macOS could not find the app's login item."
+        }
+    }
+}
+
+private extension LaunchAtLoginStatus {
+    var isRequested: Bool {
+        self == .enabled || self == .requiresApproval
     }
 }

@@ -74,6 +74,59 @@ final class AgentEventIntegrationTests: XCTestCase {
         XCTAssertEqual(store.latestEvent(), session)
     }
 
+    func testInspectsAndExplicitlyClearsOnlyStuckActiveSessions() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AgentEventStore(directory: directory)
+        let now = Date(timeIntervalSince1970: 100_000)
+        let fresh = AgentSessionState(
+            provider: .claude,
+            sessionID: "fresh",
+            cwd: "/private/fresh",
+            phase: .thinking,
+            enteredAt: now.addingTimeInterval(-300),
+            updatedAt: now.addingTimeInterval(-300)
+        )
+        let stuck = AgentSessionState(
+            provider: .codex,
+            sessionID: "stuck",
+            cwd: "/private/stuck",
+            phase: .needsYou,
+            enteredAt: now.addingTimeInterval(-7_200),
+            updatedAt: now.addingTimeInterval(-7_200)
+        )
+        try store.write(fresh)
+        try store.write(stuck)
+
+        XCTAssertEqual(
+            store.inspectSessions(now: now, staleAfter: 3_600),
+            AgentSessionInspection(
+                activeCount: 2,
+                stuckCount: 1,
+                oldestStuckUpdate: stuck.updatedAt
+            )
+        )
+        XCTAssertEqual(
+            try store.clearStuckSessions(now: now, staleAfter: 3_600),
+            1
+        )
+        XCTAssertEqual(
+            store.inspectSessions(now: now, staleAfter: 3_600),
+            AgentSessionInspection(
+                activeCount: 1,
+                stuckCount: 0,
+                oldestStuckUpdate: nil
+            )
+        )
+        XCTAssertEqual(
+            store.session(provider: .claude, sessionID: fresh.sessionID),
+            fresh
+        )
+        XCTAssertNil(store.session(provider: .codex, sessionID: stuck.sessionID))
+        XCTAssertEqual(store.latestEvent(), stuck)
+    }
+
     func testNotificationPermissionPromptMapsToNeedsYou() throws {
         let data = """
         {"session_id":"abc","cwd":"/tmp","hook_event_name":"Notification","notification_type":"permission_prompt"}

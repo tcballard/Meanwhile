@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsSectionHeader: View {
     let title: String
     var trailing: String? = nil
+    var trailingTint: Color = Color(nsColor: .tertiaryLabelColor)
     var showsProgress = false
 
     var body: some View {
@@ -15,7 +16,7 @@ struct SettingsSectionHeader: View {
             if let trailing {
                 Text(trailing)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(trailingTint)
             }
             if showsProgress {
                 ProgressView()
@@ -28,6 +29,7 @@ struct SettingsSectionHeader: View {
 struct CollapsibleSettingsSection<Content: View>: View {
     let title: String
     var trailing: String? = nil
+    var trailingTint: Color = Color(nsColor: .tertiaryLabelColor)
     @Binding var isExpanded: Bool
     var showsProgress = false
     private let content: Content
@@ -35,12 +37,14 @@ struct CollapsibleSettingsSection<Content: View>: View {
     init(
         title: String,
         trailing: String? = nil,
+        trailingTint: Color = Color(nsColor: .tertiaryLabelColor),
         isExpanded: Binding<Bool>,
         showsProgress: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.trailing = trailing
+        self.trailingTint = trailingTint
         _isExpanded = isExpanded
         self.showsProgress = showsProgress
         self.content = content()
@@ -54,9 +58,29 @@ struct CollapsibleSettingsSection<Content: View>: View {
             SettingsSectionHeader(
                 title: title,
                 trailing: trailing,
+                trailingTint: trailingTint,
                 showsProgress: showsProgress
             )
         }
+    }
+}
+
+struct SettingsInlineMessage: View {
+    let message: String
+    let systemImage: String
+    let tint: Color
+
+    init(_ message: String, systemImage: String, tint: Color) {
+        self.message = message
+        self.systemImage = systemImage
+        self.tint = tint
+    }
+
+    var body: some View {
+        Label(message, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(tint)
+            .padding(.leading, 142)
     }
 }
 

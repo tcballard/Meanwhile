@@ -5,6 +5,7 @@ struct RepositorySettingsView: View {
     @ObservedObject var model: RepositorySettingsModel
     @AppStorage("settings.section.statusItem.expanded") private var isStatusItemExpanded = true
     @AppStorage("settings.section.connectionHealth.expanded") private var isConnectionHealthExpanded = true
+    @AppStorage("settings.section.aboutSupport.expanded") private var isAboutSupportExpanded = true
     @AppStorage("settings.section.repositorySources.expanded") private var isRepositorySourcesExpanded = true
     @AppStorage("settings.section.recentSignals.expanded") private var isRecentSignalsExpanded = true
     @State private var searchText = ""
@@ -14,6 +15,30 @@ struct RepositorySettingsView: View {
         guard !searchText.isEmpty else { return model.availableRepositories }
         return model.availableRepositories.filter {
             $0.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var aboutSupportTrailing: String {
+        switch model.updateState {
+        case .updateAvailable(let version, _):
+            return "\(version) available"
+        case .unavailable:
+            return "Check unavailable"
+        case .checking:
+            return "Checking"
+        case .notChecked, .current, .developmentBuild:
+            return "Version \(model.appVersion)"
+        }
+    }
+
+    private var aboutSupportTrailingTint: Color {
+        switch model.updateState {
+        case .updateAvailable:
+            return .accentColor
+        case .unavailable:
+            return .orange
+        case .notChecked, .checking, .current, .developmentBuild:
+            return Color(nsColor: .tertiaryLabelColor)
         }
     }
 
@@ -32,17 +57,48 @@ struct RepositorySettingsView: View {
                 }
                 Divider()
                 ControlsSettingsSection(
-                    hotKey: Binding(get: { model.hotKey }, set: model.setHotKey),
+                    hotKey: Binding(
+                        get: { model.hotKey },
+                        set: { model.setHotKey($0) }
+                    ),
                     hotKeyRegistrationError: model.hotKeyRegistrationError,
                     setHotKeyRegistrationError: model.setHotKeyRegistrationError,
                     isInstallingIntegrations: model.isInstallingIntegrations,
                     integrationActionMessage: model.integrationActionMessage,
                     integrationActionIsError: model.integrationActionIsError,
-                    installIntegrations: model.installIntegrations
+                    installIntegrations: model.installIntegrations,
+                    launchAtLoginStatus: model.launchAtLoginStatus,
+                    launchAtLoginError: model.launchAtLoginError,
+                    setLaunchAtLoginEnabled: { model.setLaunchAtLoginEnabled($0) },
+                    openLoginItemsSettings: model.openLoginItemsSettings
                 )
                 Divider()
                 CollapsibleSettingsSection(
+                    title: "About & support",
+                    trailing: aboutSupportTrailing,
+                    trailingTint: aboutSupportTrailingTint,
+                    isExpanded: $isAboutSupportExpanded,
+                    showsProgress: model.updateState == .checking
+                ) {
+                    AppSettingsSection(
+                        appVersion: model.appVersion,
+                        buildVersion: model.buildVersion,
+                        updateState: model.updateState,
+                        updateErrorMessage: model.updateErrorMessage,
+                        checkForUpdates: model.checkForUpdates,
+                        openLatestRelease: model.openLatestRelease,
+                        diagnosticsCopyMessage: model.diagnosticsCopyMessage,
+                        diagnosticsCopyIsError: model.diagnosticsCopyIsError,
+                        copyDiagnostics: model.copyDiagnostics
+                    )
+                }
+                Divider()
+                CollapsibleSettingsSection(
                     title: "Connection health",
+                    trailing: model.sessionInspection.stuckCount > 0
+                        ? "\(model.sessionInspection.stuckCount) may be stuck"
+                        : nil,
+                    trailingTint: .orange,
                     isExpanded: $isConnectionHealthExpanded,
                     showsProgress: model.isCheckingHealth
                 ) {
@@ -51,6 +107,12 @@ struct RepositorySettingsView: View {
                         integrationHealthError: model.integrationHealthError,
                         lastAgentEvent: model.lastAgentEvent,
                         githubAuthenticationStatus: model.githubAuthenticationStatus,
+                        sessionInspection: model.sessionInspection,
+                        sessionRecoveryMessage: model.sessionRecoveryMessage,
+                        sessionRecoveryIsError: model.sessionRecoveryIsError,
+                        isClearingStuckSessions: model.isClearingStuckSessions,
+                        staleAfter: model.sessionStaleAfterDescription,
+                        clearStuckSessions: model.clearStuckSessions,
                         now: now
                     )
                 }
@@ -66,7 +128,7 @@ struct RepositorySettingsView: View {
                         searchText: $searchText,
                         includesAllRepositories: Binding(
                             get: { model.includesAllRepositories },
-                            set: model.setIncludesAllRepositories
+                            set: { model.setIncludesAllRepositories($0) }
                         ),
                         availableRepositories: model.availableRepositories,
                         filteredRepositories: filteredRepositories,
@@ -93,6 +155,7 @@ struct RepositorySettingsView: View {
         .task {
             model.loadRepositories()
             model.refreshStatus()
+            model.checkForUpdates()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard !Task.isCancelled else { break }
