@@ -24,6 +24,35 @@ public enum MenuBarPresenter {
         }
     }
 
+    public static func bloomText(item: WorkItem?) -> String? {
+        guard let item, item.kind == .needsYou else {
+            return statusText(item: item)
+        }
+        let attention = attentionText(item: item)
+        guard let project = projectName(item: item) else { return attention }
+
+        let separator = " — "
+        let totalLimit = 46
+        let projectLimit = min(20, totalLimit - attention.count - separator.count)
+        guard projectLimit >= 8 else { return attention }
+        let compactProject = middleTruncated(project, limit: projectLimit)
+        let combined = "\(attention)\(separator)\(compactProject)"
+        return combined.count <= totalLimit ? combined : attention
+    }
+
+    public static func attentionText(item: WorkItem) -> String {
+        guard item.kind == .needsYou else { return item.title }
+        let provider = item.session.map { providerName($0.provider) } ?? "Agent"
+        switch item.session?.effectiveAttentionReason ?? .generic {
+        case .approvalRequired:
+            return "\(provider) needs approval"
+        case .answerRequired:
+            return "\(provider) needs an answer"
+        case .generic:
+            return "\(provider) needs attention"
+        }
+    }
+
     public static func projectName(item: WorkItem) -> String? {
         guard let cwd = item.session?.cwd.trimmingCharacters(in: .whitespacesAndNewlines),
               !cwd.isEmpty,
@@ -62,10 +91,11 @@ public enum MenuBarPresenter {
     public static func tooltip(phase: AgentDisplayPhase, item: WorkItem?) -> String {
         if let item {
             if item.kind == .needsYou {
+                let attention = attentionText(item: item)
                 if let project = projectName(item: item) {
-                    return "\(item.title) in “\(project)” — click to return"
+                    return "\(attention) in “\(project)” — click to return"
                 }
-                return "\(item.title) — click to return"
+                return "\(attention) — click to return"
             }
             return "\(item.title): \(item.detail)"
         }
@@ -83,10 +113,11 @@ public enum MenuBarPresenter {
         if let item {
             switch item.kind {
             case .needsYou:
+                let attention = attentionText(item: item)
                 if let project = projectName(item: item) {
-                    return "\(item.title) in the \(project) project"
+                    return "\(attention) in \(project)"
                 }
-                return item.title
+                return attention
             case .review, .failingCI:
                 return "\(item.title), \(item.detail)"
             }
@@ -121,7 +152,7 @@ public enum MenuBarPresenter {
 
     public static func statuslineText(item: WorkItem) -> String {
         switch item.kind {
-        case .needsYou: return "Meanwhile: \(item.title)"
+        case .needsYou: return "Meanwhile: \(attentionText(item: item))"
         case .failingCI: return "Meanwhile: CI failed — \(item.detail)"
         case .review: return "Meanwhile: \(item.title) — \(item.detail)"
         }

@@ -12,6 +12,23 @@ public enum AgentPhase: String, Codable, Sendable {
     case idle
 }
 
+public enum AgentAttentionReason: String, Codable, Sendable {
+    case approvalRequired = "approval-required"
+    case answerRequired = "answer-required"
+    case generic
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .generic
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 public struct TerminalContext: Equatable, Codable, Sendable {
     public var program: String?
     public var sessionID: String?
@@ -29,6 +46,7 @@ public struct AgentSessionState: Equatable, Codable, Sendable, Identifiable {
     public var sessionID: String
     public var cwd: String
     public var phase: AgentPhase
+    public var attentionReason: AgentAttentionReason?
     public var enteredAt: Date
     public var updatedAt: Date
     public var terminal: TerminalContext
@@ -40,6 +58,7 @@ public struct AgentSessionState: Equatable, Codable, Sendable, Identifiable {
         sessionID: String,
         cwd: String,
         phase: AgentPhase,
+        attentionReason: AgentAttentionReason? = nil,
         enteredAt: Date,
         updatedAt: Date,
         terminal: TerminalContext = TerminalContext()
@@ -48,8 +67,14 @@ public struct AgentSessionState: Equatable, Codable, Sendable, Identifiable {
         self.sessionID = sessionID
         self.cwd = cwd
         self.phase = phase
+        self.attentionReason = attentionReason
         self.enteredAt = enteredAt
         self.updatedAt = updatedAt
         self.terminal = terminal
+    }
+
+    public var effectiveAttentionReason: AgentAttentionReason? {
+        guard phase == .needsYou else { return nil }
+        return attentionReason ?? .generic
     }
 }

@@ -38,11 +38,11 @@ final class MenuBarPresenterTests: XCTestCase {
         )
         XCTAssertEqual(
             MenuBarPresenter.tooltip(phase: .needsYou, item: item),
-            "Codex needs you in “Meanwhile” — click to return"
+            "Codex needs attention in “Meanwhile” — click to return"
         )
         XCTAssertEqual(
             MenuBarPresenter.accessibilityLabel(phase: .needsYou, item: item),
-            "Codex needs you in the Meanwhile project"
+            "Codex needs attention in Meanwhile"
         )
         XCTAssertEqual(
             MenuBarPresenter.accessibilityHelp(phase: .needsYou, item: item),
@@ -61,8 +61,67 @@ final class MenuBarPresenterTests: XCTestCase {
         XCTAssertEqual(MenuBarPresenter.openActionTitle(item: item), "Return to Claude")
         XCTAssertEqual(
             MenuBarPresenter.tooltip(phase: .needsYou, item: item),
-            "Claude needs you — click to return"
+            "Claude needs attention — click to return"
         )
+    }
+
+    func testReasonAwareBloomExplainsWhyAndWhereThenKeepsStableTitleCompact() {
+        let approval = item(
+            .needsYou,
+            title: "Codex needs you",
+            session: session(
+                provider: .codex,
+                cwd: "/Users/example/Developer/Meanwhile",
+                reason: .approvalRequired
+            )
+        )
+        let answer = item(
+            .needsYou,
+            title: "Claude needs you",
+            session: session(
+                provider: .claude,
+                cwd: "/Users/example/Developer/Meanwhile",
+                reason: .answerRequired
+            )
+        )
+
+        XCTAssertEqual(MenuBarPresenter.statusText(item: approval), "Codex needs you")
+        XCTAssertEqual(
+            MenuBarPresenter.bloomText(item: approval),
+            "Codex needs approval — Meanwhile"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.bloomText(item: answer),
+            "Claude needs an answer — Meanwhile"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.tooltip(phase: .needsYou, item: approval),
+            "Codex needs approval in “Meanwhile” — click to return"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityLabel(phase: .needsYou, item: answer),
+            "Claude needs an answer in Meanwhile"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.statuslineText(item: approval),
+            "Meanwhile: Codex needs approval"
+        )
+    }
+
+    func testBloomBoundsLongProjectContextWithoutTruncatingReason() {
+        let item = item(
+            .needsYou,
+            title: "Claude needs you",
+            session: session(
+                provider: .claude,
+                cwd: "/tmp/very-long-project-name-that-needs-a-readable-tail",
+                reason: .answerRequired
+            )
+        )
+
+        let bloom = MenuBarPresenter.bloomText(item: item)
+        XCTAssertEqual(bloom, "Claude needs an answer — very-long…dable-tail")
+        XCTAssertLessThanOrEqual(bloom?.count ?? .max, 46)
     }
 
     func testAccessibilityNamesVisibleReviewAndCIItemsWhileAgentIsThinking() {
@@ -130,12 +189,17 @@ final class MenuBarPresenterTests: XCTestCase {
         )
     }
 
-    private func session(provider: AgentProvider, cwd: String) -> AgentSessionState {
+    private func session(
+        provider: AgentProvider,
+        cwd: String,
+        reason: AgentAttentionReason? = nil
+    ) -> AgentSessionState {
         AgentSessionState(
             provider: provider,
             sessionID: "019f5ee8-576e-74b3-8e9a-2b6e2404970b",
             cwd: cwd,
             phase: .needsYou,
+            attentionReason: reason,
             enteredAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1)
         )

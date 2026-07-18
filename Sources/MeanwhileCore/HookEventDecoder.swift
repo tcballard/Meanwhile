@@ -27,32 +27,46 @@ public enum HookEventDecoder {
         }
 
         let phase: AgentPhase
+        let attentionReason: AgentAttentionReason?
         switch eventName {
         case "SessionStart", "Stop", "SessionEnd":
             phase = .idle
+            attentionReason = nil
         case "UserPromptSubmit", "PreToolUse", "PostToolUse":
             phase = .thinking
+            attentionReason = nil
         case "PermissionRequest":
             phase = .needsYou
+            attentionReason = .approvalRequired
         case "Notification":
             let notificationType = object["notification_type"] as? String
                 ?? object["type"] as? String
-            guard notificationType == "permission_prompt"
-                    || notificationType == "idle_prompt"
-                    || notificationType == "elicitation_dialog" else {
+            switch notificationType {
+            case "permission_prompt":
+                phase = .needsYou
+                attentionReason = .approvalRequired
+            case "idle_prompt", "elicitation_dialog":
+                phase = .needsYou
+                attentionReason = .answerRequired
+            default:
                 throw HookEventDecoderError.unsupportedEvent(eventName)
             }
-            phase = .needsYou
         default:
             throw HookEventDecoderError.unsupportedEvent(eventName)
         }
 
-        let enteredAt = previous?.phase == phase ? previous?.enteredAt ?? now : now
+        let effectiveAttentionReason = phase == .needsYou
+            ? attentionReason ?? .generic
+            : nil
+        let preservesEntry = previous?.phase == phase
+            && previous?.effectiveAttentionReason == effectiveAttentionReason
+        let enteredAt = preservesEntry ? previous?.enteredAt ?? now : now
         return AgentSessionState(
             provider: provider,
             sessionID: sessionID,
             cwd: cwd,
             phase: phase,
+            attentionReason: attentionReason,
             enteredAt: enteredAt,
             updatedAt: now,
             terminal: TerminalContext(
