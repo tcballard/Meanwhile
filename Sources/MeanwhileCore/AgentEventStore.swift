@@ -1,5 +1,27 @@
 import Foundation
 
+public struct AgentSessionInspection: Equatable, Sendable {
+    public var activeCount: Int
+    public var stuckCount: Int
+    public var oldestStuckUpdate: Date?
+
+    public init(
+        activeCount: Int,
+        stuckCount: Int,
+        oldestStuckUpdate: Date?
+    ) {
+        self.activeCount = activeCount
+        self.stuckCount = stuckCount
+        self.oldestStuckUpdate = oldestStuckUpdate
+    }
+
+    public static let empty = AgentSessionInspection(
+        activeCount: 0,
+        stuckCount: 0,
+        oldestStuckUpdate: nil
+    )
+}
+
 public final class AgentEventStore: @unchecked Sendable {
     public let directory: URL
     public let latestEventURL: URL
@@ -78,9 +100,57 @@ public final class AgentEventStore: @unchecked Sendable {
         return current.sorted { $0.id < $1.id }
     }
 
+    public func inspectSessions(
+        now: Date = Date(),
+        staleAfter: TimeInterval = 3_600
+    ) -> AgentSessionInspection {
+        lock.lock()
+        defer { lock.unlock() }
+        let active = sessionFiles()
+            .compactMap(decode(url:))
+            .filter { $0.phase != .idle }
+        let stuck = active.filter {
+            now.timeIntervalSince($0.updatedAt) > staleAfter
+        }
+        return AgentSessionInspection(
+            activeCount: active.count,
+            stuckCount: stuck.count,
+            oldestStuckUpdate: stuck.map(\.updatedAt).min()
+        )
+    }
+
+    @discardableResult
+    public func clearStuckSessions(
+        now: Date = Date(),
+        staleAfter: TimeInterval = 3_600
+    ) throws -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        var removed = 0
+        for url in sessionFiles() {
+            guard let session = decode(url: url),
+                  session.phase != .idle,
+                  now.timeIntervalSince(session.updatedAt) > staleAfter else {
+                continue
+            }
+            try fileManager.removeItem(at: url)
+            removed += 1
+        }
+        return removed
+    }
+
     private func decode(url: URL) -> AgentSessionState? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? decoder.decode(AgentSessionState.self, from: data)
+    }
+
+    private func sessionFiles() -> [URL] {
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return urls.filter { $0.pathExtension == "json" }
     }
 
     private func url(for session: AgentSessionState) -> URL {

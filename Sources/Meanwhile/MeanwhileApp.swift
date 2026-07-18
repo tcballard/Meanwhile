@@ -15,6 +15,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configuration = MeanwhileConfiguration.load()
     private let eventStore = AgentEventStore()
     private let recentSignalStore = RecentSignalStore()
+    private let launchAtLoginController = LaunchAtLoginController()
     private lazy var integrationInstaller = AgentIntegrationInstaller(helperURL: helperURL())
     private lazy var hotKeyPreferences = HotKeyPreferences(defaultHotKey: configuration.hotKey)
     private var menuBar: MenuBarController<EmptyView>?
@@ -31,6 +32,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         integrationInstaller: integrationInstaller,
         eventStore: eventStore,
         recentSignalStore: recentSignalStore,
+        sessionStaleAfter: configuration.sessionStaleSeconds,
+        appVersion: Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String ?? "Unknown",
+        buildVersion: Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleVersion"
+        ) as? String ?? "Unknown",
+        operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+        launchAtLoginStatus: { [launchAtLoginController] in
+            launchAtLoginController.status
+        },
+        setLaunchAtLoginEnabled: { [launchAtLoginController] enabled in
+            try launchAtLoginController.setEnabled(enabled)
+        },
+        openLoginItemsSettings: { [launchAtLoginController] in
+            launchAtLoginController.openSystemSettings()
+        },
+        copyText: { text in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            return pasteboard.setString(text, forType: .string)
+        },
+        openURL: { url in
+            NSWorkspace.shared.open(url)
+        },
         selectionDidChange: { [weak self] in
             self?.runtime?.repositorySelectionDidChange()
         },

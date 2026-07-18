@@ -1,6 +1,6 @@
 import Foundation
 
-public enum RecentSignalKind: String, Codable, Sendable {
+public enum RecentSignalKind: String, Codable, Sendable, CaseIterable {
     case agentNeedsYou
     case reviewSurfaced
     case ciFailed

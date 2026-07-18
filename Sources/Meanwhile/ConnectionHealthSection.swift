@@ -6,7 +6,14 @@ struct ConnectionHealthSection: View {
     let integrationHealthError: String?
     let lastAgentEvent: AgentSessionState?
     let githubAuthenticationStatus: GitHubAuthenticationStatus
+    let sessionInspection: AgentSessionInspection
+    let sessionRecoveryMessage: String?
+    let sessionRecoveryIsError: Bool
+    let isClearingStuckSessions: Bool
+    let staleAfter: String
+    let clearStuckSessions: () -> Void
     let now: Date
+    @State private var isConfirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -16,6 +23,17 @@ struct ConnectionHealthSection: View {
                 title: "Agent hooks",
                 value: integrationHealthTitle,
                 detail: integrationHealthDetail
+            )
+            HealthRow(
+                systemImage: sessionHealthSymbol,
+                tint: sessionHealthTint,
+                title: "Agent sessions",
+                value: sessionHealthTitle,
+                detail: sessionHealthDetail,
+                actionTitle: sessionInspection.stuckCount > 0 ? "Clear…" : nil,
+                actionAccessibilityLabel: "Clear stuck agent sessions",
+                action: { isConfirmingClear = true },
+                actionDisabled: isClearingStuckSessions
             )
             HealthRow(
                 systemImage: agentEventSymbol,
@@ -32,6 +50,54 @@ struct ConnectionHealthSection: View {
                 detail: githubHealthDetail
             )
         }
+        .confirmationDialog(
+            "Clear sessions that may be stuck?",
+            isPresented: $isConfirmingClear
+        ) {
+            Button("Clear Stuck Sessions", role: .destructive) {
+                clearStuckSessions()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Meanwhile will recheck and forget only non-idle sessions with no event for more than \(staleAfter). The latest event summary is kept.")
+        }
+    }
+
+    private var sessionHealthTitle: String {
+        if isClearingStuckSessions { return "Clearing stuck sessions…" }
+        if sessionInspection.stuckCount == 1 { return "1 session may be stuck" }
+        if sessionInspection.stuckCount > 1 {
+            return "\(sessionInspection.stuckCount) sessions may be stuck"
+        }
+        if sessionInspection.activeCount == 1 { return "1 active session" }
+        if sessionInspection.activeCount > 1 {
+            return "\(sessionInspection.activeCount) active sessions"
+        }
+        return "No active sessions"
+    }
+
+    private var sessionHealthDetail: String {
+        if let sessionRecoveryMessage { return sessionRecoveryMessage }
+        if sessionInspection.stuckCount > 0 {
+            return "No agent event for more than \(staleAfter). Clear only if the agent has stopped."
+        }
+        if sessionInspection.activeCount > 0 {
+            return "No sessions currently look stuck."
+        }
+        return "Agent sessions will appear here while Claude or Codex is active."
+    }
+
+    private var sessionHealthSymbol: String {
+        if sessionRecoveryIsError { return "exclamationmark.triangle.fill" }
+        if sessionInspection.stuckCount > 0 { return "clock.badge.exclamationmark.fill" }
+        if sessionInspection.activeCount > 0 { return "waveform.circle.fill" }
+        return "circle.dashed"
+    }
+
+    private var sessionHealthTint: Color {
+        if sessionRecoveryIsError || sessionInspection.stuckCount > 0 { return .orange }
+        if sessionInspection.activeCount > 0 { return .green }
+        return .secondary
     }
 
     private var integrationHealthTitle: String {
@@ -137,24 +203,36 @@ private struct HealthRow: View {
     let title: String
     let value: String
     let detail: String
+    var actionTitle: String? = nil
+    var actionAccessibilityLabel: String? = nil
+    var action: (() -> Void)? = nil
+    var actionDisabled = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: systemImage)
-                .foregroundStyle(tint)
-                .frame(width: 18, height: 18)
-            Text(title)
-                .frame(width: 118, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                    .font(.callout.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tint)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .frame(width: 118, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(value)
+                        .font(.callout.weight(.semibold))
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .accessibilityElement(children: .combine)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .disabled(actionDisabled)
+                    .accessibilityLabel(actionAccessibilityLabel ?? actionTitle)
+            }
         }
-        .accessibilityElement(children: .combine)
     }
 }
