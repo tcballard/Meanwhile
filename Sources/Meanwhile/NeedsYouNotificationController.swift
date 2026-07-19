@@ -12,9 +12,11 @@ enum NeedsYouNotificationDeliveryOutcome: Equatable {
 @MainActor
 final class NeedsYouNotificationController: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let identifierPrefix = "Meanwhile.needs-you."
+    nonisolated static let testIdentifier = "Meanwhile.attention-test"
 
     var onPermissionChange: ((NeedsYouNotificationPermission) -> Void)?
     var onResponse: ((String) -> Void)?
+    var onTestResponse: (() -> Void)?
 
     private(set) var permission: NeedsYouNotificationPermission = .unknown {
         didSet {
@@ -101,6 +103,35 @@ final class NeedsYouNotificationController: NSObject, UNUserNotificationCenterDe
                     wasDelivered: wasDelivered,
                     completion: completion
                 )
+            }
+        }
+    }
+
+    func deliverTest(
+        completion: @escaping (NeedsYouNotificationDeliveryOutcome) -> Void
+    ) {
+        guard permission == .authorized else {
+            completion(.cancelled)
+            return
+        }
+        center.removePendingNotificationRequests(withIdentifiers: [Self.testIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.testIdentifier])
+        let content = UNMutableNotificationContent()
+        content.title = "Meanwhile attention test"
+        content.body = "This is a test. Click to return to Meanwhile Settings."
+        let request = UNNotificationRequest(
+            identifier: Self.testIdentifier,
+            content: content,
+            trigger: nil
+        )
+        center.add(request) { [weak self] error in
+            Task { @MainActor [weak self] in
+                if error == nil {
+                    completion(.delivered)
+                } else {
+                    self?.refreshPermission()
+                    completion(.failed)
+                }
             }
         }
     }
@@ -258,7 +289,8 @@ final class NeedsYouNotificationController: NSObject, UNUserNotificationCenterDe
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        guard notification.request.identifier.hasPrefix(Self.identifierPrefix) else {
+        guard notification.request.identifier.hasPrefix(Self.identifierPrefix)
+                || notification.request.identifier == Self.testIdentifier else {
             completionHandler([])
             return
         }
@@ -271,6 +303,13 @@ final class NeedsYouNotificationController: NSObject, UNUserNotificationCenterDe
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let identifier = response.notification.request.identifier
+        if identifier == Self.testIdentifier,
+           response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            center.removeDeliveredNotifications(withIdentifiers: [identifier])
+            Task { @MainActor [weak self] in self?.onTestResponse?() }
+            completionHandler()
+            return
+        }
         guard identifier.hasPrefix(Self.identifierPrefix),
               response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
             completionHandler()

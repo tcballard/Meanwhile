@@ -7,6 +7,7 @@ struct RepositorySettingsView: View {
     @AppStorage("settings.section.connectionHealth.expanded") private var isConnectionHealthExpanded = true
     @AppStorage("settings.section.aboutSupport.expanded") private var isAboutSupportExpanded = true
     @AppStorage("settings.section.notifications.expanded") private var isNotificationsExpanded = true
+    @AppStorage("settings.section.attentionTest.expanded") private var isAttentionTestExpanded = true
     @AppStorage("settings.section.repositorySources.expanded") private var isRepositorySourcesExpanded = true
     @AppStorage("settings.section.recentSignals.expanded") private var isRecentSignalsExpanded = true
     @State private var searchText = ""
@@ -79,6 +80,19 @@ struct RepositorySettingsView: View {
                         repositoryScopeDescription: model.repositoryScopeDescription,
                         sourceHealthDescription: model.sourceHealthDescription,
                         sourceHasError: model.errorMessage != nil
+                    )
+                }
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Attention test",
+                    trailing: model.attentionTestIsRunning ? "Testing" : nil,
+                    isExpanded: $isAttentionTestExpanded,
+                    showsProgress: model.attentionTestIsRunning
+                ) {
+                    AttentionTestSettingsSection(
+                        isRunning: model.attentionTestIsRunning,
+                        result: model.attentionTestResult,
+                        run: model.runAttentionTest
                     )
                 }
                 Divider()
@@ -161,12 +175,17 @@ struct RepositorySettingsView: View {
                         integrationHealthError: model.integrationHealthError,
                         lastAgentEvent: model.lastAgentEvent,
                         githubAuthenticationStatus: model.githubAuthenticationStatus,
+                        githubLoginCopyMessage: model.githubLoginCopyMessage,
                         sessionInspection: model.sessionInspection,
                         sessionRecoveryMessage: model.sessionRecoveryMessage,
                         sessionRecoveryIsError: model.sessionRecoveryIsError,
                         isClearingStuckSessions: model.isClearingStuckSessions,
+                        sourceRefreshSnapshot: model.sourceRefreshSnapshot,
                         staleAfter: model.sessionStaleAfterDescription,
+                        repairIntegrations: model.installIntegrations,
                         clearStuckSessions: model.clearStuckSessions,
+                        copyGitHubLoginCommand: model.copyGitHubLoginCommand,
+                        refreshGitHubSources: model.refreshGitHubSources,
                         now: now
                     )
                 }

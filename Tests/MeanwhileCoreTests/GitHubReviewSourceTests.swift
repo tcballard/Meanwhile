@@ -47,6 +47,25 @@ final class GitHubReviewSourceTests: XCTestCase {
         )
     }
 
+    func testForceBypassesCacheWithoutBypassingPollingGate() throws {
+        let runner = RecordingCommandRunner(results: [successfulResult, successfulResult])
+        let source = GitHubReviewSource(runner: runner)
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        _ = try source.reviewsIfDue(pollingAllowed: true, now: start)
+        _ = try source.reviewsIfDue(
+            pollingAllowed: true,
+            force: true,
+            now: start.addingTimeInterval(1)
+        )
+        _ = try source.reviewsIfDue(
+            pollingAllowed: false,
+            force: true,
+            now: start.addingTimeInterval(2)
+        )
+        XCTAssertEqual(runner.commands.count, 2)
+    }
+
     func testFiltersCachedReviewsUsingRepositoryPreferences() throws {
         let preferences = RepositoryPreferences(
             defaults: UserDefaults(suiteName: UUID().uuidString)!

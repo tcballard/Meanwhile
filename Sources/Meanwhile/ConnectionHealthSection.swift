@@ -6,12 +6,17 @@ struct ConnectionHealthSection: View {
     let integrationHealthError: String?
     let lastAgentEvent: AgentSessionState?
     let githubAuthenticationStatus: GitHubAuthenticationStatus
+    let githubLoginCopyMessage: String?
     let sessionInspection: AgentSessionInspection
     let sessionRecoveryMessage: String?
     let sessionRecoveryIsError: Bool
     let isClearingStuckSessions: Bool
+    let sourceRefreshSnapshot: SourceRefreshSnapshot
     let staleAfter: String
+    let repairIntegrations: () -> Void
     let clearStuckSessions: () -> Void
+    let copyGitHubLoginCommand: () -> Void
+    let refreshGitHubSources: () -> Void
     let now: Date
     @State private var isConfirmingClear = false
 
@@ -22,7 +27,10 @@ struct ConnectionHealthSection: View {
                 tint: integrationHealthTint,
                 title: "Agent hooks",
                 value: integrationHealthTitle,
-                detail: integrationHealthDetail
+                detail: integrationHealthDetail,
+                actionTitle: integrationHealth.state == .installed ? nil : "Repair…",
+                actionAccessibilityLabel: "Repair agent integrations",
+                action: repairIntegrations
             )
             HealthRow(
                 systemImage: sessionHealthSymbol,
@@ -47,7 +55,24 @@ struct ConnectionHealthSection: View {
                 tint: githubHealthTint,
                 title: "GitHub",
                 value: githubHealthTitle,
-                detail: githubHealthDetail
+                detail: githubHealthDetail,
+                actionTitle: githubAuthenticationStatus == .authenticated
+                    ? nil
+                    : "Copy Login Command",
+                actionAccessibilityLabel: "Copy GitHub login command",
+                action: copyGitHubLoginCommand
+            )
+            SourceHealthRow(
+                title: "Review source",
+                record: sourceRefreshSnapshot.reviews,
+                now: now,
+                refresh: refreshGitHubSources
+            )
+            SourceHealthRow(
+                title: "Failing CI source",
+                record: sourceRefreshSnapshot.failingCI,
+                now: now,
+                refresh: refreshGitHubSources
             )
         }
         .confirmationDialog(
@@ -181,7 +206,8 @@ struct ConnectionHealthSection: View {
     }
 
     private var githubHealthDetail: String {
-        githubAuthenticationStatus == .authenticated
+        if let githubLoginCopyMessage { return githubLoginCopyMessage }
+        return githubAuthenticationStatus == .authenticated
             ? "Using the GitHub CLI session on this Mac."
             : "Run gh auth login, then refresh repository sources."
     }
@@ -194,6 +220,64 @@ struct ConnectionHealthSection: View {
 
     private var githubHealthTint: Color {
         githubAuthenticationStatus == .authenticated ? .green : .orange
+    }
+}
+
+private struct SourceHealthRow: View {
+    let title: String
+    let record: SourceRefreshRecord
+    let now: Date
+    let refresh: () -> Void
+
+    var body: some View {
+        HealthRow(
+            systemImage: symbol,
+            tint: tint,
+            title: title,
+            value: value,
+            detail: detail,
+            actionTitle: record.isEnabled ? (record.lastFailureAt == nil ? "Refresh All" : "Retry All") : nil,
+            actionAccessibilityLabel: "\(record.lastFailureAt == nil ? "Refresh" : "Retry") all GitHub sources",
+            action: refresh,
+            actionDisabled: record.isRefreshing
+        )
+    }
+
+    private var value: String {
+        guard record.isEnabled else { return "Disabled" }
+        if record.isRefreshing { return "Refreshing…" }
+        if let failure = record.lastFailureAt {
+            guard let success = record.lastSuccessAt else { return "Refresh failed" }
+            if failure > success { return "Refresh failed" }
+        }
+        if let success = record.lastSuccessAt {
+            return "Updated \(relativeDateString(success, relativeTo: now))"
+        }
+        return "Not checked yet"
+    }
+
+    private var detail: String {
+        guard record.isEnabled else { return "Disabled in Meanwhile’s configuration." }
+        if record.isRefreshing { return "Checking GitHub now." }
+        if record.lastFailureAt != nil { return "Check GitHub CLI authentication, then retry." }
+        if record.lastSuccessAt != nil {
+            return "Automatic checks pause while agents are idle. Refresh works at any time."
+        }
+        return "Run a manual refresh, or start an agent session to enable automatic checks."
+    }
+
+    private var symbol: String {
+        if !record.isEnabled { return "minus.circle" }
+        if record.isRefreshing { return "arrow.triangle.2.circlepath" }
+        if record.lastFailureAt != nil { return "exclamationmark.triangle.fill" }
+        if record.lastSuccessAt != nil { return "checkmark.circle.fill" }
+        return "clock.badge.questionmark"
+    }
+
+    private var tint: Color {
+        if record.lastFailureAt != nil { return .orange }
+        if record.lastSuccessAt != nil { return .green }
+        return .secondary
     }
 }
 

@@ -32,7 +32,7 @@ public final class GitHubCISource {
     private let runner: any CommandRunning
     private let cacheInterval: TimeInterval
     private let repositoryIsAllowed: @Sendable (String) -> Bool
-    private var lastAttemptDate: Date?
+    public private(set) var lastAttemptDate: Date?
     private var allCachedItems: [FailingCIItem] = []
 
     public var cachedItems: [FailingCIItem] {
@@ -49,14 +49,19 @@ public final class GitHubCISource {
         self.repositoryIsAllowed = repositoryIsAllowed
     }
 
+    public func isDue(now: Date = Date()) -> Bool {
+        guard let lastAttemptDate else { return true }
+        return now.timeIntervalSince(lastAttemptDate) >= cacheInterval
+    }
+
     @discardableResult
     public func itemsIfDue(
         pollingAllowed: Bool,
+        force: Bool = false,
         now: Date = Date()
     ) throws -> [FailingCIItem] {
         guard pollingAllowed else { return cachedItems }
-        if let lastAttemptDate,
-           now.timeIntervalSince(lastAttemptDate) < cacheInterval {
+        if !force, !isDue(now: now) {
             return cachedItems
         }
 

@@ -35,6 +35,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var needsYouNotificationState = NeedsYouNotificationState()
     private var bloomExpirationWorkItem: DispatchWorkItem?
     private var pendingBloomSettlement = false
+    private var attentionTestState = AttentionTestState()
+    private var attentionTestExpirationWorkItem: DispatchWorkItem?
     private lazy var agentFocusRouter = AgentFocusRouter(
         focusTerminal: { [terminalFocuser] session in
             terminalFocuser.focus(session)
@@ -92,6 +94,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         notificationSettingsDidChange: { [weak self] in
             self?.reconcileNeedsYouNotification()
+        },
+        runAttentionTest: { [weak self] completion in
+            self?.runAttentionTest(completion: completion)
+        },
+        sourceRefreshSnapshot: { [weak self] in
+            self?.runtime?.sourceRefreshSnapshot
+                ?? SourceRefreshSnapshot(
+                    reviewsEnabled: self?.configuration.enableReviews ?? true,
+                    failingCIEnabled: self?.configuration.enableFailingCI ?? true
+                )
+        },
+        refreshSources: { [weak self] completion in
+            self?.runtime?.refreshSources(completion: completion)
         }
     )
 
@@ -103,6 +118,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         needsYouNotificationController.onResponse = { [weak self] identifier in
             self?.handleNeedsYouNotificationResponse(identifier: identifier)
+        }
+        needsYouNotificationController.onTestResponse = { [weak self] in
+            self?.openSettings()
         }
         needsYouNotificationController.start()
         if !needsYouNotificationPreferences.settings.isEnabled {
@@ -155,6 +173,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         bloomExpirationWorkItem?.cancel()
+        attentionTestExpirationWorkItem?.cancel()
         runtime?.stop()
     }
 
@@ -167,6 +186,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         currentItem = presentation.item
         recordPresentationIfNeeded(presentation.item)
         reconcileNeedsYouNotification(presentation)
+        if attentionTestState.observeRealAttention(isActive: presentation.item != nil) == .preempted {
+            attentionTestExpirationWorkItem?.cancel()
+            attentionTestExpirationWorkItem = nil
+            settingsModel.attentionTestDidEnd()
+        }
+        if attentionTestState.isActive { return }
         let transition = bloomState.observe(
             phase: presentation.phase,
             item: presentation.item
@@ -343,6 +368,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openCurrentItem() {
+        if attentionTestState.isActive {
+            openSettings()
+            return
+        }
         guard let item = currentItem else { return }
         settleBloomBeforeAction()
         cancelNeedsYouNotification(for: item)
@@ -355,7 +384,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 showFocusFailure(for: item)
             }
         } else if let url = MenuBarPresenter.destinationURL(item: item) {
-            NSWorkspace.shared.open(url)
+            if !NSWorkspace.shared.open(url) {
+                showLinkFailure(for: item, url: url)
+            }
+        }
+    }
+
+    private func showLinkFailure(for _: WorkItem, url: URL) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t open this GitHub item"
+        alert.informativeText = "The interruption is still active. Copy the link and open it in a browser when you’re ready."
+        alert.addButton(withTitle: "Copy Link")
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            _ = pasteboard.setString(url.absoluteString, forType: .string)
         }
     }
 
@@ -375,9 +421,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             The interruption is still active.
             """
         }
+        alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "OK")
         NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        if alert.runModal() == .alertFirstButtonReturn {
+            openSettings()
+        }
     }
 
     private func registerHotKeyFromPreferences() {
@@ -599,6 +648,74 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitMeanwhile() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private func runAttentionTest(
+        completion: @escaping (AttentionTestRunResult) -> Void
+    ) {
+        let realAttentionIsActive = currentItem != nil
+        guard case .started(let generation) = attentionTestState.start(
+            realAttentionIsActive: realAttentionIsActive
+        ) else {
+            completion(.blockedByRealAttention)
+            return
+        }
+
+        attentionTestExpirationWorkItem?.cancel()
+        renderAttentionTest()
+        menuBar?.announce("Meanwhile attention test")
+
+        let notificationsAvailable = needsYouNotificationPreferences.settings.isEnabled
+            && needsYouNotificationController.permission == .authorized
+        if notificationsAvailable {
+            needsYouNotificationController.deliverTest { outcome in
+                switch outcome {
+                case .delivered: completion(.startedWithNotification)
+                case .cancelled: completion(.startedMenuBarOnly)
+                case .failed: completion(.failedNotification)
+                }
+            }
+        } else {
+            completion(.startedMenuBarOnly)
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.attentionTestState.finish(generation: generation) == .finished else {
+                    return
+                }
+                self.attentionTestExpirationWorkItem = nil
+                self.settingsModel.attentionTestDidEnd()
+                if let latestPresentation = self.latestPresentation {
+                    self.render(latestPresentation, isBlooming: self.bloomState.isActive)
+                }
+            }
+        }
+        attentionTestExpirationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.statusItemBloomDuration,
+            execute: workItem
+        )
+    }
+
+    private func renderAttentionTest() {
+        menuBar?.setTitle("Test needs attention")
+        menuBar?.statusItem.length = NSStatusItem.variableLength
+        menuBar?.setIcon(
+            systemName: MenuBarPresenter.iconName(phase: .needsYou),
+            accessibilityDescription: nil,
+            tintColor: .systemRed
+        )
+        menuBar?.setAccessibility(
+            label: "Meanwhile attention test",
+            help: "Click to return to Settings. This is not a real task."
+        )
+        menuBar?.statusItem.button?.toolTip = "Meanwhile attention test — click to return to Settings"
+        openItemMenuItem?.title = "Return to Settings"
+        openItemMenuItem?.isEnabled = true
+        snoozeMenuItem?.isEnabled = false
+        hideMenuItem?.isEnabled = false
     }
 }
 

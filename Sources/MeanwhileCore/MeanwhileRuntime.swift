@@ -4,6 +4,7 @@ import Peripheral
 
 public final class MeanwhileRuntime: @unchecked Sendable {
     public typealias PresentationHandler = @Sendable (MeanwhilePresentation) -> Void
+    public typealias SourceRefreshHandler = @Sendable (SourceRefreshSnapshot) -> Void
 
     private let logger = Logger(subsystem: "Meanwhile", category: "Runtime")
     private let sessionQueue: DispatchQueue
@@ -27,7 +28,17 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         var currentItem: WorkItem?
         var lastThinkingDate: Date?
         var sourcePollInFlight = false
+        var sourceRefresh: SourceRefreshSnapshot
         var stopped = false
+
+        init(
+            sourceRefresh: SourceRefreshSnapshot = SourceRefreshSnapshot(
+                reviewsEnabled: true,
+                failingCIEnabled: true
+            )
+        ) {
+            self.sourceRefresh = sourceRefresh
+        }
     }
 
     public init(
@@ -50,6 +61,12 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         engine = MeanwhileEngine(configuration: configuration, dispositions: dispositions)
         self.statuslineStore = statuslineStore
         self.presentationHandler = presentationHandler
+        state = State(
+            sourceRefresh: SourceRefreshSnapshot(
+                reviewsEnabled: configuration.enableReviews,
+                failingCIEnabled: configuration.enableFailingCI
+            )
+        )
         sessionTimer = PollTimer(interval: 0.5, queue: sessionQueue)
         sourceTimer = PollTimer(interval: 60, queue: sourceQueue)
     }
@@ -79,6 +96,16 @@ public final class MeanwhileRuntime: @unchecked Sendable {
                 $0.failingCI = self.ciSource.cachedItems
             }
             present()
+        }
+    }
+
+    public var sourceRefreshSnapshot: SourceRefreshSnapshot {
+        withState { $0.sourceRefresh }
+    }
+
+    public func refreshSources(completion: SourceRefreshHandler? = nil) {
+        sourceQueue.async { [weak self] in
+            self?.requestSourcePoll(force: true, completion: completion)
         }
     }
 
@@ -113,41 +140,76 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         if shouldPoll { requestSourcePoll(now: now) }
     }
 
-    private func requestSourcePoll(now: Date = Date()) {
+    private func requestSourcePoll(
+        now: Date = Date(),
+        force: Bool = false,
+        completion: SourceRefreshHandler? = nil
+    ) {
         let shouldStart = withState { state -> Bool in
             guard !state.stopped, !state.sourcePollInFlight else { return false }
             state.sourcePollInFlight = true
             return true
         }
-        guard shouldStart else { return }
+        guard shouldStart else {
+            if let completion { completion(sourceRefreshSnapshot) }
+            return
+        }
         sourceQueue.async { [weak self] in
-            self?.pollSources(now: now)
+            self?.pollSources(now: now, force: force, completion: completion)
         }
     }
 
-    private func pollSources(now: Date) {
-        defer { withState { $0.sourcePollInFlight = false } }
-        let allowed = withState { state -> Bool in
-            guard !state.stopped, let lastThinkingDate = state.lastThinkingDate else {
-                return false
+    private func pollSources(
+        now: Date,
+        force: Bool,
+        completion: SourceRefreshHandler?
+    ) {
+        defer {
+            let snapshot = withState { state -> SourceRefreshSnapshot in
+                state.sourcePollInFlight = false
+                return state.sourceRefresh
             }
+            completion?(snapshot)
+        }
+        let allowed = withState { state -> Bool in
+            guard !state.stopped else { return false }
+            if force { return true }
+            guard let lastThinkingDate = state.lastThinkingDate else { return false }
             return now.timeIntervalSince(lastThinkingDate) <= 600
         }
         guard allowed else { return }
 
-        if configuration.enableReviews {
+        if configuration.enableReviews, force || reviewSource.isDue(now: now) {
+            withState { $0.sourceRefresh[.reviews].begin(at: now) }
             do {
-                let reviews = try reviewSource.reviewsIfDue(pollingAllowed: true, now: now)
-                withState { $0.reviews = reviews }
+                let reviews = try reviewSource.reviewsIfDue(
+                    pollingAllowed: true,
+                    force: force,
+                    now: now
+                )
+                withState {
+                    $0.reviews = reviews
+                    $0.sourceRefresh[.reviews].succeed(at: Date())
+                }
             } catch {
+                withState { $0.sourceRefresh[.reviews].fail(at: Date()) }
                 logger.error("Review poll failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        if configuration.enableFailingCI {
+        if configuration.enableFailingCI, force || ciSource.isDue(now: now) {
+            withState { $0.sourceRefresh[.failingCI].begin(at: now) }
             do {
-                let items = try ciSource.itemsIfDue(pollingAllowed: true, now: now)
-                withState { $0.failingCI = items }
+                let items = try ciSource.itemsIfDue(
+                    pollingAllowed: true,
+                    force: force,
+                    now: now
+                )
+                withState {
+                    $0.failingCI = items
+                    $0.sourceRefresh[.failingCI].succeed(at: Date())
+                }
             } catch {
+                withState { $0.sourceRefresh[.failingCI].fail(at: Date()) }
                 logger.error("CI poll failed: \(error.localizedDescription, privacy: .public)")
             }
         }

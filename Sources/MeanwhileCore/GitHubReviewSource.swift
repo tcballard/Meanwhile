@@ -32,7 +32,7 @@ public final class GitHubReviewSource {
     private let runner: any CommandRunning
     private let cacheInterval: TimeInterval
     private let repositoryIsAllowed: @Sendable (String) -> Bool
-    private var lastAttemptDate: Date?
+    public private(set) var lastAttemptDate: Date?
     private var allCachedReviews: [ReviewItem] = []
 
     public var cachedReviews: [ReviewItem] {
@@ -49,15 +49,20 @@ public final class GitHubReviewSource {
         self.repositoryIsAllowed = repositoryIsAllowed
     }
 
+    public func isDue(now: Date = Date()) -> Bool {
+        guard let lastAttemptDate else { return true }
+        return now.timeIntervalSince(lastAttemptDate) >= cacheInterval
+    }
+
     /// Returns cached data unless polling is allowed and the 60-second cache is due.
     @discardableResult
     public func reviewsIfDue(
         pollingAllowed: Bool,
+        force: Bool = false,
         now: Date = Date()
     ) throws -> [ReviewItem] {
         guard pollingAllowed else { return cachedReviews }
-        if let lastAttemptDate,
-           now.timeIntervalSince(lastAttemptDate) < cacheInterval {
+        if !force, !isDue(now: now) {
             return cachedReviews
         }
 
