@@ -32,6 +32,10 @@ public struct WorkItem: Equatable, Codable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.session = session
     }
+
+    public static func needsYouID(for session: AgentSessionState) -> String {
+        "needs-you:\(session.id):\(session.enteredAt.timeIntervalSince1970)"
+    }
 }
 
 public enum WorkItemOrdering {

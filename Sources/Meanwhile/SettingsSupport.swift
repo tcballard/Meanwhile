@@ -21,6 +21,7 @@ struct SettingsSectionHeader: View {
             if showsProgress {
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityLabel("\(title) in progress")
             }
         }
     }

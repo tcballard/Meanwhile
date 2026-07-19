@@ -9,7 +9,7 @@ public enum StatusItemBloomTransition: Equatable, Sendable {
 public struct StatusItemBloomState: Sendable {
     private struct Candidate: Equatable, Sendable {
         var itemID: String
-        var reason: AgentAttentionReason
+        var reason: AgentAttentionReason?
     }
 
     private var hasObservedPresentation = false
@@ -27,12 +27,13 @@ public struct StatusItemBloomState: Sendable {
         item: WorkItem?
     ) -> StatusItemBloomTransition {
         let candidate: Candidate?
-        if phase == .needsYou,
-           let item,
-           item.kind == .needsYou {
+        if let item,
+           (item.kind == .needsYou ? phase == .needsYou : phase == .thinking) {
             candidate = Candidate(
                 itemID: item.id,
-                reason: item.session?.effectiveAttentionReason ?? .generic
+                reason: item.kind == .needsYou
+                    ? item.session?.effectiveAttentionReason ?? .generic
+                    : nil
             )
         } else {
             candidate = nil

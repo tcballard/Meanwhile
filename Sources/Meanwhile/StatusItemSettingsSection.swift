@@ -35,13 +35,13 @@ struct StatusItemSettingsSection: View {
                     systemImage: "rectangle.stack.fill",
                     tint: .orange,
                     label: "#78",
-                    meaning: "A review is ready while an agent works"
+                    meaning: "Briefly names the repository; click to open the PR"
                 )
                 StatusLanguageRow(
                     systemImage: "rectangle.stack.fill",
                     tint: .orange,
-                    label: "CI!",
-                    meaning: "Failing CI is ready while an agent works"
+                    label: "CI! #42",
+                    meaning: "Briefly names the repository; click to inspect checks"
                 )
                 StatusLanguageRow(
                     systemImage: "rectangle.stack",

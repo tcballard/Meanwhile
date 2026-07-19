@@ -18,8 +18,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let eventStore = AgentEventStore()
     private let recentSignalStore = RecentSignalStore()
     private let launchAtLoginController = LaunchAtLoginController()
+    private let needsYouNotificationPreferences = NeedsYouNotificationPreferences()
     private lazy var integrationInstaller = AgentIntegrationInstaller(helperURL: helperURL())
     private lazy var hotKeyPreferences = HotKeyPreferences(defaultHotKey: configuration.hotKey)
+    private lazy var needsYouNotificationController = NeedsYouNotificationController()
     private var menuBar: MenuBarController<EmptyView>?
     private var runtime: MeanwhileRuntime?
     private var currentItem: WorkItem?
@@ -30,6 +32,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRecordedItemID: String?
     private var latestPresentation: MeanwhilePresentation?
     private var bloomState = StatusItemBloomState()
+    private var needsYouNotificationState = NeedsYouNotificationState()
     private var bloomExpirationWorkItem: DispatchWorkItem?
     private var pendingBloomSettlement = false
     private lazy var agentFocusRouter = AgentFocusRouter(
@@ -43,6 +46,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         integrationInstaller: integrationInstaller,
         eventStore: eventStore,
         recentSignalStore: recentSignalStore,
+        notificationPreferences: needsYouNotificationPreferences,
+        notificationController: needsYouNotificationController,
         sessionStaleAfter: configuration.sessionStaleSeconds,
         appVersion: Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
@@ -84,8 +89,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     detail: "Claude and Codex"
                 )
             )
+        },
+        notificationSettingsDidChange: { [weak self] in
+            self?.reconcileNeedsYouNotification()
         }
     )
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        needsYouNotificationController.onPermissionChange = { [weak self] permission in
+            guard let self else { return }
+            settingsModel.setNeedsYouNotificationPermission(permission)
+            reconcileNeedsYouNotification()
+        }
+        needsYouNotificationController.onResponse = { [weak self] identifier in
+            self?.handleNeedsYouNotificationResponse(identifier: identifier)
+        }
+        needsYouNotificationController.start()
+        if !needsYouNotificationPreferences.settings.isEnabled {
+            needsYouNotificationController.cancelAllManaged()
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -135,10 +158,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         runtime?.stop()
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        needsYouNotificationController.refreshPermission()
+    }
+
     private func present(_ presentation: MeanwhilePresentation) {
         latestPresentation = presentation
         currentItem = presentation.item
         recordPresentationIfNeeded(presentation.item)
+        reconcileNeedsYouNotification(presentation)
         let transition = bloomState.observe(
             phase: presentation.phase,
             item: presentation.item
@@ -317,11 +345,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openCurrentItem() {
         guard let item = currentItem else { return }
         settleBloomBeforeAction()
+        cancelNeedsYouNotification(for: item)
+        open(item)
+    }
+
+    private func open(_ item: WorkItem) {
         if item.kind == .needsYou, let session = item.session {
             if agentFocusRouter.focus(session) == .unavailable {
                 showFocusFailure(for: item)
             }
-        } else if let url = item.url {
+        } else if let url = MenuBarPresenter.destinationURL(item: item) {
             NSWorkspace.shared.open(url)
         }
     }
@@ -363,6 +396,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func snoozeCurrentItem() {
         settleBloomBeforeAction()
         if let item = currentItem {
+            cancelNeedsYouNotification(for: item)
             recentSignalStore.record(
                 RecentSignal(
                     kind: .snoozed,
@@ -377,6 +411,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func hideCurrentItemUntilChange() {
         settleBloomBeforeAction()
         if let item = currentItem {
+            cancelNeedsYouNotification(for: item)
             recentSignalStore.record(
                 RecentSignal(
                     kind: .hiddenUntilChange,
@@ -386,6 +421,131 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         runtime?.dismissCurrent()
+    }
+
+    private func reconcileNeedsYouNotification(
+        _ presentation: MeanwhilePresentation? = nil
+    ) {
+        guard let presentation = presentation ?? latestPresentation else { return }
+        let settings = needsYouNotificationPreferences.settings
+        let permission = needsYouNotificationController.permission
+        if let item = presentation.item, item.kind == .needsYou {
+            let identifier = NeedsYouNotificationController.identifier(for: item.id)
+            if needsYouNotificationPreferences.containsReceipt(identifier: identifier) {
+                needsYouNotificationState.restoreReceipt(itemID: item.id)
+            }
+        }
+        if !settings.isEnabled {
+            needsYouNotificationController.retainOnly(itemID: nil)
+        } else if permission != .unknown {
+            let eligibleItemID = permission == .authorized
+                && presentation.phase == .needsYou
+                && presentation.item?.kind == .needsYou
+                ? presentation.item?.id
+                : nil
+            needsYouNotificationController.retainOnly(itemID: eligibleItemID)
+        }
+        let transition = needsYouNotificationState.observe(
+            settings: settings,
+            permission: permission,
+            phase: presentation.phase,
+            item: presentation.item
+        )
+        switch transition {
+        case .none:
+            break
+        case .deliver(let item):
+            deliverNeedsYouNotification(item)
+        case .replace(let previousItemID, let delivery):
+            needsYouNotificationController.cancel(itemID: previousItemID)
+            if let delivery {
+                deliverNeedsYouNotification(delivery)
+            }
+        case .cancel(let itemID):
+            needsYouNotificationController.cancel(itemID: itemID)
+        }
+    }
+
+    private func cancelNeedsYouNotification(for item: WorkItem) {
+        guard item.kind == .needsYou else { return }
+        needsYouNotificationPreferences.recordReceipt(
+            identifier: NeedsYouNotificationController.identifier(for: item.id)
+        )
+        let transition = needsYouNotificationState.acknowledge(itemID: item.id)
+        if case .cancel(let itemID) = transition {
+            needsYouNotificationController.cancel(itemID: itemID)
+        }
+    }
+
+    private func deliverNeedsYouNotification(_ item: WorkItem) {
+        guard let title = MenuBarPresenter.notificationTitle(item: item) else { return }
+        let identifier = NeedsYouNotificationController.identifier(for: item.id)
+        needsYouNotificationController.deliver(
+            identifier: identifier,
+            title: title
+        ) { [weak self] outcome in
+            switch outcome {
+            case .delivered:
+                self?.needsYouNotificationPreferences.recordReceipt(identifier: identifier)
+            case .failed:
+                self?.needsYouNotificationState.deliveryFailed(
+                    itemID: item.id,
+                    retryNotBefore: Date().addingTimeInterval(60)
+                )
+            case .cancelled:
+                break
+            }
+        }
+    }
+
+    private func handleNeedsYouNotificationResponse(identifier: String) {
+        let current = currentItem.flatMap { item -> WorkItem? in
+            guard item.kind == .needsYou,
+                  NeedsYouNotificationController.identifier(for: item.id) == identifier else {
+                return nil
+            }
+            return item
+        }
+        if let current {
+            settleBloomBeforeAction()
+            cancelNeedsYouNotification(for: current)
+            open(current)
+            return
+        }
+
+        let session = eventStore.sessions(
+            staleAfter: configuration.sessionStaleSeconds,
+            activeStaleAfter: configuration.activeSessionStaleSeconds
+        ).first { session in
+            session.phase == .needsYou
+                && NeedsYouNotificationController.identifier(
+                    for: WorkItem.needsYouID(for: session)
+                ) == identifier
+        }
+        guard let session else {
+            showExpiredNotificationMessage()
+            return
+        }
+        let item = WorkItem(
+            id: WorkItem.needsYouID(for: session),
+            kind: .needsYou,
+            title: "\(providerDisplayName(session.provider)) needs you",
+            detail: session.cwd,
+            createdAt: session.enteredAt,
+            session: session
+        )
+        cancelNeedsYouNotification(for: item)
+        open(item)
+    }
+
+    private func showExpiredNotificationMessage() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "That task is no longer waiting"
+        alert.informativeText = "Meanwhile did not open a different task."
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func showFirstRunSettingsIfNeeded() {

@@ -19,8 +19,120 @@ final class MenuBarPresenterTests: XCTestCase {
             MenuBarPresenter.statusText(item: item(.needsYou, title: "Codex needs you")),
             "Codex needs you"
         )
-        XCTAssertEqual(MenuBarPresenter.statusText(item: item(.failingCI, title: "CI failed on #4")), "CI!")
+        XCTAssertEqual(MenuBarPresenter.statusText(item: item(.failingCI, title: "CI failed on #4")), "CI! #4")
         XCTAssertEqual(MenuBarPresenter.statusText(item: item(.review, title: "Review #78")), "#78")
+    }
+
+    func testReviewAndCIBloomNameTheSingleActionableItem() {
+        XCTAssertEqual(
+            MenuBarPresenter.bloomText(item: item(.review, title: "Review #78")),
+            "Review #78 — repo"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.bloomText(item: item(.failingCI, title: "CI failed on #42")),
+            "CI failed #42 — repo"
+        )
+    }
+
+    func testReviewAndCIActionsAreExplicitAndCompact() {
+        let review = item(.review, title: "Review #78")
+        let ci = item(.failingCI, title: "CI failed on #42")
+
+        XCTAssertEqual(MenuBarPresenter.openActionTitle(item: review), "Open Review #78 — repo")
+        XCTAssertEqual(MenuBarPresenter.openActionTitle(item: ci), "Inspect CI #42 — repo")
+        XCTAssertLessThanOrEqual(MenuBarPresenter.openActionTitle(item: review).count, 30)
+        XCTAssertLessThanOrEqual(MenuBarPresenter.openActionTitle(item: ci).count, 30)
+
+        let longRepository = item(
+            .review,
+            title: "Review #78",
+            detail: "acme/a-very-long-repository-name-with-a-readable-tail"
+        )
+        XCTAssertLessThanOrEqual(MenuBarPresenter.openActionTitle(item: longRepository).count, 30)
+    }
+
+    func testReviewAndCITooltipsExplainTheClickDestination() {
+        XCTAssertEqual(
+            MenuBarPresenter.tooltip(
+                phase: .thinking,
+                item: item(.review, title: "Review #78")
+            ),
+            "Review requested — acme/repo #78 — click to open"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.tooltip(
+                phase: .thinking,
+                item: item(.failingCI, title: "CI failed on #42")
+            ),
+            "CI failed — acme/repo #42 — click to inspect checks"
+        )
+    }
+
+    func testReviewAndCIAccessibilityNamesTheItemAndItsResult() {
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityLabel(
+                phase: .thinking,
+                item: item(.review, title: "Review #78")
+            ),
+            "Review requested for pull request 78 in acme/repo"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityHelp(
+                phase: .thinking,
+                item: item(.review, title: "Review #78")
+            ),
+            "Opens pull request 78 on GitHub."
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityLabel(
+                phase: .thinking,
+                item: item(.failingCI, title: "CI failed on #42")
+            ),
+            "Continuous integration failed for pull request 42 in acme/repo"
+        )
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityHelp(
+                phase: .thinking,
+                item: item(.failingCI, title: "CI failed on #42")
+            ),
+            "Opens the failed checks for pull request 42 on GitHub."
+        )
+    }
+
+    func testReviewOpensPullRequestAndCIOpensThatPullRequestsChecks() throws {
+        let pullRequestURL = try XCTUnwrap(URL(string: "https://github.com/acme/repo/pull/42"))
+        let checksURL = pullRequestURL.appendingPathComponent("checks")
+        let review = item(.review, title: "Review #42", url: pullRequestURL)
+        let ci = item(.failingCI, title: "CI failed on #42", url: pullRequestURL)
+        let ciAlreadyAtChecks = item(.failingCI, title: "CI failed on #42", url: checksURL)
+
+        XCTAssertEqual(MenuBarPresenter.destinationURL(item: review), pullRequestURL)
+        XCTAssertEqual(MenuBarPresenter.destinationURL(item: ci), checksURL)
+        XCTAssertEqual(MenuBarPresenter.destinationURL(item: ciAlreadyAtChecks), checksURL)
+        XCTAssertNil(MenuBarPresenter.destinationURL(item: item(.failingCI, title: "CI failed on #42")))
+    }
+
+    func testMalformedReviewAndCITitlesDoNotBecomeFakePullRequestNumbers() {
+        let review = item(.review, title: "Review ready")
+        let mixedReview = item(.review, title: "Review #12oops")
+        let ci = item(.failingCI, title: "CI failed on #not-a-number")
+
+        XCTAssertEqual(MenuBarPresenter.statusText(item: review), "Review")
+        XCTAssertEqual(MenuBarPresenter.bloomText(item: review), "Review ready — repo")
+        XCTAssertEqual(MenuBarPresenter.openActionTitle(item: review), "Open Review — repo")
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityLabel(phase: .thinking, item: review),
+            "Review requested in acme/repo"
+        )
+        XCTAssertEqual(MenuBarPresenter.statusText(item: mixedReview), "Review")
+
+        XCTAssertEqual(MenuBarPresenter.statusText(item: ci), "CI!")
+        XCTAssertEqual(MenuBarPresenter.bloomText(item: ci), "CI failed — repo")
+        XCTAssertEqual(MenuBarPresenter.openActionTitle(item: ci), "Inspect CI — repo")
+        XCTAssertEqual(
+            MenuBarPresenter.accessibilityHelp(phase: .thinking, item: ci),
+            "Opens the failed checks on GitHub."
+        )
     }
 
     func testNeedsYouCopyAddsProjectContextOutsideTheStatusTitle() {
@@ -124,21 +236,42 @@ final class MenuBarPresenterTests: XCTestCase {
         XCTAssertLessThanOrEqual(bloom?.count ?? .max, 46)
     }
 
-    func testAccessibilityNamesVisibleReviewAndCIItemsWhileAgentIsThinking() {
-        XCTAssertEqual(
-            MenuBarPresenter.accessibilityLabel(
-                phase: .thinking,
-                item: item(.review, title: "Review #78")
-            ),
-            "Review #78, acme/repo"
+    func testReviewBloomBoundsLongUnicodeRepositoryWithoutLosingIdentity() throws {
+        let item = item(
+            .review,
+            title: "Review #78",
+            detail: "acme/Meanwhile-🚀-repository-with-a-very-readable-tail"
         )
-        XCTAssertEqual(
-            MenuBarPresenter.accessibilityLabel(
-                phase: .thinking,
-                item: item(.failingCI, title: "CI failed on #4")
-            ),
-            "CI failed on #4, acme/repo"
+
+        let bloom = try XCTUnwrap(MenuBarPresenter.bloomText(item: item))
+        XCTAssertTrue(bloom.hasPrefix("Review #78 — "))
+        XCTAssertLessThanOrEqual(bloom.count, 46)
+    }
+
+    func testNeedsYouNotificationTitlesStayReasonAwareAndReviewCIRemainSilent() {
+        let approval = item(
+            .needsYou,
+            title: "Codex needs you",
+            session: session(
+                provider: .codex,
+                cwd: "/tmp/Meanwhile",
+                reason: .approvalRequired
+            )
         )
+        let answer = item(
+            .needsYou,
+            title: "Claude needs you",
+            session: session(
+                provider: .claude,
+                cwd: "/tmp/Meanwhile",
+                reason: .answerRequired
+            )
+        )
+
+        XCTAssertEqual(MenuBarPresenter.notificationTitle(item: approval), "Codex still needs approval")
+        XCTAssertEqual(MenuBarPresenter.notificationTitle(item: answer), "Claude still needs an answer")
+        XCTAssertNil(MenuBarPresenter.notificationTitle(item: item(.review, title: "Review #78")))
+        XCTAssertNil(MenuBarPresenter.notificationTitle(item: item(.failingCI, title: "CI failed on #42")))
     }
 
     func testProjectNameRejectsPrivateOrUnhelpfulContexts() {
@@ -177,13 +310,16 @@ final class MenuBarPresenterTests: XCTestCase {
     private func item(
         _ kind: WorkItemKind,
         title: String,
+        detail: String = "acme/repo",
+        url: URL? = nil,
         session: AgentSessionState? = nil
     ) -> WorkItem {
         WorkItem(
             id: UUID().uuidString,
             kind: kind,
             title: title,
-            detail: "acme/repo",
+            detail: detail,
+            url: url,
             createdAt: Date(timeIntervalSince1970: 1),
             session: session
         )
