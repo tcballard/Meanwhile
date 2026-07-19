@@ -50,7 +50,7 @@ public final class MeanwhileEngine: @unchecked Sendable {
 
         let urgentItems = needsYou.map { session in
             WorkItem(
-                id: "needs-you:\(session.id):\(session.enteredAt.timeIntervalSince1970)",
+                id: WorkItem.needsYouID(for: session),
                 kind: .needsYou,
                 title: "\(providerName(session.provider)) needs you",
                 detail: session.cwd,

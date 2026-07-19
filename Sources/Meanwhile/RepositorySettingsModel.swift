@@ -34,6 +34,9 @@ final class RepositorySettingsModel: ObservableObject {
     @Published private(set) var sessionRecoveryMessage: String?
     @Published private(set) var sessionRecoveryIsError = false
     @Published private(set) var isClearingStuckSessions = false
+    @Published private(set) var needsYouNotificationSettings: NeedsYouNotificationSettings
+    @Published private(set) var needsYouNotificationPermission: NeedsYouNotificationPermission
+    @Published private(set) var isRequestingNotificationPermission = false
 
     let appVersion: String
     let buildVersion: String
@@ -88,6 +91,8 @@ final class RepositorySettingsModel: ObservableObject {
     private let integrationInstaller: AgentIntegrationInstaller
     private let eventStore: AgentEventStore
     private let recentSignalStore: RecentSignalStore
+    private let notificationPreferences: NeedsYouNotificationPreferences
+    private let notificationController: NeedsYouNotificationController
     private let releaseUpdateChecker: ReleaseUpdateChecker
     private let sessionStaleAfter: TimeInterval
     private let operatingSystemVersion: String
@@ -99,6 +104,7 @@ final class RepositorySettingsModel: ObservableObject {
     private let selectionDidChange: () -> Void
     private let hotKeyDidChange: (HotKeyConfiguration?) -> Void
     private let integrationDidInstall: (AgentIntegrationInstallResult) -> Void
+    private let notificationSettingsDidChange: () -> Void
     private var hasLoaded = false
     private var diagnosticsFeedbackID = UUID()
 
@@ -110,6 +116,8 @@ final class RepositorySettingsModel: ObservableObject {
         integrationInstaller: AgentIntegrationInstaller,
         eventStore: AgentEventStore,
         recentSignalStore: RecentSignalStore,
+        notificationPreferences: NeedsYouNotificationPreferences,
+        notificationController: NeedsYouNotificationController,
         releaseUpdateChecker: ReleaseUpdateChecker = ReleaseUpdateChecker(),
         sessionStaleAfter: TimeInterval,
         appVersion: String,
@@ -122,7 +130,8 @@ final class RepositorySettingsModel: ObservableObject {
         openURL: @escaping (URL) -> Void,
         selectionDidChange: @escaping () -> Void,
         hotKeyDidChange: @escaping (HotKeyConfiguration?) -> Void,
-        integrationDidInstall: @escaping (AgentIntegrationInstallResult) -> Void
+        integrationDidInstall: @escaping (AgentIntegrationInstallResult) -> Void,
+        notificationSettingsDidChange: @escaping () -> Void
     ) {
         self.preferences = preferences
         self.hotKeyPreferences = hotKeyPreferences
@@ -131,6 +140,8 @@ final class RepositorySettingsModel: ObservableObject {
         self.integrationInstaller = integrationInstaller
         self.eventStore = eventStore
         self.recentSignalStore = recentSignalStore
+        self.notificationPreferences = notificationPreferences
+        self.notificationController = notificationController
         self.releaseUpdateChecker = releaseUpdateChecker
         self.sessionStaleAfter = sessionStaleAfter
         self.appVersion = appVersion
@@ -144,11 +155,14 @@ final class RepositorySettingsModel: ObservableObject {
         self.selectionDidChange = selectionDidChange
         self.hotKeyDidChange = hotKeyDidChange
         self.integrationDidInstall = integrationDidInstall
+        self.notificationSettingsDidChange = notificationSettingsDidChange
         let snapshot = preferences.snapshot
         includesAllRepositories = snapshot.includesAllRepositories
         selectedRepositories = snapshot.selectedRepositories
         hotKey = hotKeyPreferences.hotKey
         self.launchAtLoginStatus = launchAtLoginStatus()
+        needsYouNotificationSettings = notificationPreferences.settings
+        needsYouNotificationPermission = notificationController.permission
     }
 
     func loadRepositories(force: Bool = false) {
@@ -179,6 +193,7 @@ final class RepositorySettingsModel: ObservableObject {
 
     func refreshStatus() {
         guard !isCheckingHealth else { return }
+        notificationController.refreshPermission()
         isCheckingHealth = true
         let authenticationChecker = self.authenticationChecker
         let integrationInstaller = self.integrationInstaller
@@ -261,6 +276,46 @@ final class RepositorySettingsModel: ObservableObject {
 
     func openLoginItemsSettings() {
         openLoginItemsSettingsAction()
+    }
+
+    func setNeedsYouNotificationsEnabled(_ enabled: Bool) {
+        notificationPreferences.setEnabled(enabled)
+        needsYouNotificationSettings = notificationPreferences.settings
+        notificationSettingsDidChange()
+
+        guard enabled,
+              !isRequestingNotificationPermission,
+              needsYouNotificationPermission == .notDetermined
+                || needsYouNotificationPermission == .unknown else { return }
+        requestNeedsYouNotificationPermission()
+    }
+
+    func setNeedsYouNotificationDelay(_ delay: NeedsYouNotificationDelay) {
+        notificationPreferences.setDelay(delay)
+        needsYouNotificationSettings = notificationPreferences.settings
+        notificationSettingsDidChange()
+    }
+
+    func setNeedsYouNotificationPermission(_ permission: NeedsYouNotificationPermission) {
+        needsYouNotificationPermission = permission
+        isRequestingNotificationPermission = false
+    }
+
+    func openNotificationSettings() {
+        notificationController.openSystemSettings()
+    }
+
+    func requestNeedsYouNotificationPermission() {
+        guard needsYouNotificationSettings.isEnabled,
+              !isRequestingNotificationPermission,
+              needsYouNotificationPermission == .notDetermined
+                || needsYouNotificationPermission == .unknown else { return }
+        isRequestingNotificationPermission = true
+        notificationController.requestPermission()
+    }
+
+    func retryNotificationStatus() {
+        notificationController.refreshPermission()
     }
 
     func openLatestRelease() {

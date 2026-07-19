@@ -6,6 +6,7 @@ struct RepositorySettingsView: View {
     @AppStorage("settings.section.statusItem.expanded") private var isStatusItemExpanded = true
     @AppStorage("settings.section.connectionHealth.expanded") private var isConnectionHealthExpanded = true
     @AppStorage("settings.section.aboutSupport.expanded") private var isAboutSupportExpanded = true
+    @AppStorage("settings.section.notifications.expanded") private var isNotificationsExpanded = true
     @AppStorage("settings.section.repositorySources.expanded") private var isRepositorySourcesExpanded = true
     @AppStorage("settings.section.recentSignals.expanded") private var isRecentSignalsExpanded = true
     @State private var searchText = ""
@@ -42,6 +43,31 @@ struct RepositorySettingsView: View {
         }
     }
 
+    private var notificationTrailing: String {
+        let settings = model.needsYouNotificationSettings
+        guard settings.isEnabled else { return "Off" }
+        if model.isRequestingNotificationPermission { return "Requesting" }
+        switch model.needsYouNotificationPermission {
+        case .authorized: return "After \(settings.delay.shortLabel)"
+        case .denied: return "Blocked"
+        case .limited: return "Limited"
+        case .unavailable: return "Unavailable"
+        case .notDetermined, .unknown: return "Permission needed"
+        }
+    }
+
+    private var notificationTrailingTint: Color {
+        guard model.needsYouNotificationSettings.isEnabled else {
+            return Color(nsColor: .tertiaryLabelColor)
+        }
+        switch model.needsYouNotificationPermission {
+        case .denied, .limited, .unavailable:
+            return .orange
+        default:
+            return Color(nsColor: .tertiaryLabelColor)
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -72,6 +98,34 @@ struct RepositorySettingsView: View {
                     setLaunchAtLoginEnabled: { model.setLaunchAtLoginEnabled($0) },
                     openLoginItemsSettings: model.openLoginItemsSettings
                 )
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Notifications",
+                    trailing: notificationTrailing,
+                    trailingTint: notificationTrailingTint,
+                    isExpanded: $isNotificationsExpanded,
+                    showsProgress: model.isRequestingNotificationPermission
+                ) {
+                    NeedsYouNotificationSettingsSection(
+                        settings: Binding(
+                            get: { model.needsYouNotificationSettings },
+                            set: { settings in
+                                if settings.isEnabled
+                                    != model.needsYouNotificationSettings.isEnabled {
+                                    model.setNeedsYouNotificationsEnabled(settings.isEnabled)
+                                }
+                                if settings.delay != model.needsYouNotificationSettings.delay {
+                                    model.setNeedsYouNotificationDelay(settings.delay)
+                                }
+                            }
+                        ),
+                        permission: model.needsYouNotificationPermission,
+                        isRequestingPermission: model.isRequestingNotificationPermission,
+                        requestPermission: model.requestNeedsYouNotificationPermission,
+                        openSystemSettings: model.openNotificationSettings,
+                        retryStatus: model.retryNotificationStatus
+                    )
+                }
                 Divider()
                 CollapsibleSettingsSection(
                     title: "About & support",
@@ -162,6 +216,17 @@ struct RepositorySettingsView: View {
                 now = Date()
                 model.refreshStatus()
             }
+        }
+    }
+}
+
+private extension NeedsYouNotificationDelay {
+    var shortLabel: String {
+        switch self {
+        case .oneMinute: return "1 min"
+        case .fiveMinutes: return "5 min"
+        case .fifteenMinutes: return "15 min"
+        case .thirtyMinutes: return "30 min"
         }
     }
 }

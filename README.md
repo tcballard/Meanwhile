@@ -14,6 +14,9 @@ dependencies.
   always show glyph only.
 - Surfaces two sources: failing CI on your own open pull requests, then review
   requests, oldest first within each source.
+- Briefly expands newly selected reviews and CI failures with repository context,
+  then keeps the settled menu-bar label compact. Failing CI opens directly to
+  the pull request's checks.
 - Orders all work deterministically: needs-you, red CI, reviews, oldest first.
 - Supports 15-minute snooze and **Hide Until It Changes** from the right-click
   menu.
@@ -23,6 +26,9 @@ dependencies.
   GitHub sources using the repository settings.
 - Offers a native **Launch at Login** switch that reflects macOS's real Login
   Items state, including approval when the system requires it.
+- Offers off-by-default, needs-you-only notifications with a selectable delay.
+  Meanwhile confirms the task is still waiting before posting one quiet reminder;
+  reviews and CI never notify.
 - Shows the installed version and latest GitHub release in Settings without
   downloading or installing anything automatically.
 - Identifies agent sessions that may be stuck and lets you clear only those

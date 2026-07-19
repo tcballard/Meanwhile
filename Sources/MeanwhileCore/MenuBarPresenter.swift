@@ -17,27 +17,28 @@ public enum MenuBarPresenter {
         guard let item else { return nil }
         switch item.kind {
         case .needsYou: return item.title
-        case .failingCI: return "CI!"
+        case .failingCI:
+            return itemNumber(item).map { "CI! #\($0)" } ?? "CI!"
         case .review:
-            let number = item.title.split(separator: "#").last.map(String.init)
-            return number.map { "#\($0)" } ?? "Review"
+            return itemNumber(item).map { "#\($0)" } ?? "Review"
         }
     }
 
     public static func bloomText(item: WorkItem?) -> String? {
-        guard let item, item.kind == .needsYou else {
-            return statusText(item: item)
+        guard let item else { return nil }
+        switch item.kind {
+        case .needsYou:
+            return contextualTitle(
+                attentionText(item: item),
+                context: projectName(item: item)
+            )
+        case .review:
+            let base = itemNumber(item).map { "Review #\($0)" } ?? "Review ready"
+            return contextualTitle(base, context: repositoryName(item: item))
+        case .failingCI:
+            let base = itemNumber(item).map { "CI failed #\($0)" } ?? "CI failed"
+            return contextualTitle(base, context: repositoryName(item: item))
         }
-        let attention = attentionText(item: item)
-        guard let project = projectName(item: item) else { return attention }
-
-        let separator = " — "
-        let totalLimit = 46
-        let projectLimit = min(20, totalLimit - attention.count - separator.count)
-        guard projectLimit >= 8 else { return attention }
-        let compactProject = middleTruncated(project, limit: projectLimit)
-        let combined = "\(attention)\(separator)\(compactProject)"
-        return combined.count <= totalLimit ? combined : attention
     }
 
     public static func attentionText(item: WorkItem) -> String {
@@ -70,6 +71,36 @@ public enum MenuBarPresenter {
         return middleTruncated(name, limit: 32)
     }
 
+    public static func repositoryName(item: WorkItem) -> String? {
+        guard item.kind == .review || item.kind == .failingCI else { return nil }
+        let repository = item.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !repository.isEmpty,
+              repository.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
+        let name = repository.split(separator: "/").last.map(String.init) ?? repository
+        guard !name.isEmpty, name != ".", name != ".." else { return nil }
+        return middleTruncated(name, limit: 32)
+    }
+
+    public static func notificationTitle(item: WorkItem) -> String? {
+        guard item.kind == .needsYou else { return nil }
+        let provider = item.session.map { providerName($0.provider) } ?? "Agent"
+        switch item.session?.effectiveAttentionReason ?? .generic {
+        case .approvalRequired:
+            return "\(provider) still needs approval"
+        case .answerRequired:
+            return "\(provider) still needs an answer"
+        case .generic:
+            return "\(provider) still needs attention"
+        }
+    }
+
+    public static func destinationURL(item: WorkItem) -> URL? {
+        guard let url = item.url else { return nil }
+        guard item.kind == .failingCI,
+              url.lastPathComponent != "checks" else { return url }
+        return url.appendingPathComponent("checks")
+    }
+
     public static func openActionTitle(item: WorkItem) -> String {
         switch item.kind {
         case .needsYou:
@@ -83,8 +114,12 @@ public enum MenuBarPresenter {
                 return "\(action) — \(project)"
             }
             return action
-        case .review, .failingCI:
-            return "Open \(item.title) — \(item.detail)"
+        case .review:
+            let base = itemNumber(item).map { "Open Review #\($0)" } ?? "Open Review"
+            return menuActionTitle(base, repository: repositoryName(item: item))
+        case .failingCI:
+            let base = itemNumber(item).map { "Inspect CI #\($0)" } ?? "Inspect CI"
+            return menuActionTitle(base, repository: repositoryName(item: item))
         }
     }
 
@@ -97,7 +132,18 @@ public enum MenuBarPresenter {
                 }
                 return "\(attention) — click to return"
             }
-            return "\(item.title): \(item.detail)"
+            let number = itemNumber(item)
+            let repository = middleTruncated(item.detail, limit: 64)
+            switch item.kind {
+            case .review:
+                let identity = number.map { "\(repository) #\($0)" } ?? repository
+                return "Review requested — \(identity) — click to open"
+            case .failingCI:
+                let identity = number.map { "\(repository) #\($0)" } ?? repository
+                return "CI failed — \(identity) — click to inspect checks"
+            case .needsYou:
+                return "\(item.title) — click to return"
+            }
         }
         switch phase {
         case .idle: return "Meanwhile — idle"
@@ -118,8 +164,16 @@ public enum MenuBarPresenter {
                     return "\(attention) in \(project)"
                 }
                 return attention
-            case .review, .failingCI:
-                return "\(item.title), \(item.detail)"
+            case .review:
+                if let number = itemNumber(item) {
+                    return "Review requested for pull request \(number) in \(item.detail)"
+                }
+                return "Review requested in \(item.detail)"
+            case .failingCI:
+                if let number = itemNumber(item) {
+                    return "Continuous integration failed for pull request \(number) in \(item.detail)"
+                }
+                return "Continuous integration failed in \(item.detail)"
             }
         }
         switch phase {
@@ -141,8 +195,12 @@ public enum MenuBarPresenter {
                     return "Returns to the waiting task."
                 }
                 return "Returns to the waiting \(providerName(provider)) task."
-            case .review, .failingCI:
-                return "Opens \(item.title)."
+            case .review:
+                return itemNumber(item).map { "Opens pull request \($0) on GitHub." }
+                    ?? "Opens the pull request on GitHub."
+            case .failingCI:
+                return itemNumber(item).map { "Opens the failed checks for pull request \($0) on GitHub." }
+                    ?? "Opens the failed checks on GitHub."
             }
         }
         return phase == .needsYou
@@ -153,9 +211,37 @@ public enum MenuBarPresenter {
     public static func statuslineText(item: WorkItem) -> String {
         switch item.kind {
         case .needsYou: return "Meanwhile: \(attentionText(item: item))"
-        case .failingCI: return "Meanwhile: CI failed — \(item.detail)"
+        case .failingCI: return "Meanwhile: \(item.title) — \(item.detail)"
         case .review: return "Meanwhile: \(item.title) — \(item.detail)"
         }
+    }
+
+    private static func itemNumber(_ item: WorkItem) -> String? {
+        guard let marker = item.title.lastIndex(of: "#") else { return nil }
+        let suffix = item.title[item.title.index(after: marker)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return nil }
+        return suffix
+    }
+
+    private static func contextualTitle(_ base: String, context: String?) -> String {
+        guard let context else { return base }
+        let separator = " — "
+        let totalLimit = 46
+        let contextLimit = min(20, totalLimit - base.count - separator.count)
+        guard contextLimit >= 8 else { return base }
+        let compactContext = middleTruncated(context, limit: contextLimit)
+        let combined = "\(base)\(separator)\(compactContext)"
+        return combined.count <= totalLimit ? combined : base
+    }
+
+    private static func menuActionTitle(_ base: String, repository: String?) -> String {
+        guard let repository else { return base }
+        let separator = " — "
+        let totalLimit = 30
+        let repositoryLimit = totalLimit - base.count - separator.count
+        guard repositoryLimit >= 6 else { return base }
+        return "\(base)\(separator)\(middleTruncated(repository, limit: repositoryLimit))"
     }
 
     private static func providerName(_ provider: AgentProvider) -> String {
