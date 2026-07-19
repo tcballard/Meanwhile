@@ -4,6 +4,7 @@ import Peripheral
 
 public final class MeanwhileRuntime: @unchecked Sendable {
     public typealias PresentationHandler = @Sendable (MeanwhilePresentation) -> Void
+    public typealias SourceRefreshHandler = @Sendable (SourceRefreshSnapshot) -> Void
 
     private let logger = Logger(subsystem: "Meanwhile", category: "Runtime")
     private let sessionQueue: DispatchQueue
@@ -27,7 +28,19 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         var currentItem: WorkItem?
         var lastThinkingDate: Date?
         var sourcePollInFlight = false
+        var sourceRefresh: SourceRefreshSnapshot
+        var sourceSelection: AttentionSourceSelection
         var stopped = false
+
+        init(
+            sourceSelection: AttentionSourceSelection = AttentionSourceSelection()
+        ) {
+            self.sourceSelection = sourceSelection
+            sourceRefresh = SourceRefreshSnapshot(
+                reviewsEnabled: sourceSelection.reviewsEnabled,
+                failingCIEnabled: sourceSelection.failingCIEnabled
+            )
+        }
     }
 
     public init(
@@ -35,6 +48,7 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         reviewSource: GitHubReviewSource = GitHubReviewSource(),
         ciSource: GitHubCISource = GitHubCISource(),
         configuration: MeanwhileConfiguration = MeanwhileConfiguration.load(),
+        sourceSelection: AttentionSourceSelection? = nil,
         dispositions: ItemDispositionStore = ItemDispositionStore(),
         statuslineStore: StatuslineSnapshotStore = StatuslineSnapshotStore(),
         presentationHandler: @escaping PresentationHandler
@@ -50,6 +64,12 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         engine = MeanwhileEngine(configuration: configuration, dispositions: dispositions)
         self.statuslineStore = statuslineStore
         self.presentationHandler = presentationHandler
+        state = State(
+            sourceSelection: sourceSelection ?? AttentionSourceSelection(
+                reviewsEnabled: configuration.enableReviews,
+                failingCIEnabled: configuration.enableFailingCI
+            )
+        )
         sessionTimer = PollTimer(interval: 0.5, queue: sessionQueue)
         sourceTimer = PollTimer(interval: 60, queue: sourceQueue)
     }
@@ -79,6 +99,37 @@ public final class MeanwhileRuntime: @unchecked Sendable {
                 $0.failingCI = self.ciSource.cachedItems
             }
             present()
+        }
+    }
+
+    public var sourceRefreshSnapshot: SourceRefreshSnapshot {
+        withState { $0.sourceRefresh }
+    }
+
+    public func refreshSources(completion: SourceRefreshHandler? = nil) {
+        sourceQueue.async { [weak self] in
+            self?.requestSourcePoll(force: true, completion: completion)
+        }
+    }
+
+    public func sourceSelectionDidChange(_ selection: AttentionSourceSelection) {
+        sourceQueue.async { [weak self] in
+            guard let self else { return }
+            let shouldRefresh = withState { state -> Bool in
+                guard state.sourceSelection != selection else { return false }
+                let enabledNewSource = (!state.sourceSelection.reviewsEnabled && selection.reviewsEnabled)
+                    || (!state.sourceSelection.failingCIEnabled && selection.failingCIEnabled)
+                state.sourceSelection = selection
+                state.sourceRefresh.reviews.isEnabled = selection.reviewsEnabled
+                state.sourceRefresh.reviews.isRefreshing = false
+                state.sourceRefresh.failingCI.isEnabled = selection.failingCIEnabled
+                state.sourceRefresh.failingCI.isRefreshing = false
+                if !selection.reviewsEnabled { state.reviews = [] }
+                if !selection.failingCIEnabled { state.failingCI = [] }
+                return enabledNewSource
+            }
+            present()
+            if shouldRefresh { requestSourcePoll(force: true) }
         }
     }
 
@@ -113,41 +164,77 @@ public final class MeanwhileRuntime: @unchecked Sendable {
         if shouldPoll { requestSourcePoll(now: now) }
     }
 
-    private func requestSourcePoll(now: Date = Date()) {
+    private func requestSourcePoll(
+        now: Date = Date(),
+        force: Bool = false,
+        completion: SourceRefreshHandler? = nil
+    ) {
         let shouldStart = withState { state -> Bool in
             guard !state.stopped, !state.sourcePollInFlight else { return false }
             state.sourcePollInFlight = true
             return true
         }
-        guard shouldStart else { return }
+        guard shouldStart else {
+            if let completion { completion(sourceRefreshSnapshot) }
+            return
+        }
         sourceQueue.async { [weak self] in
-            self?.pollSources(now: now)
+            self?.pollSources(now: now, force: force, completion: completion)
         }
     }
 
-    private func pollSources(now: Date) {
-        defer { withState { $0.sourcePollInFlight = false } }
-        let allowed = withState { state -> Bool in
-            guard !state.stopped, let lastThinkingDate = state.lastThinkingDate else {
-                return false
+    private func pollSources(
+        now: Date,
+        force: Bool,
+        completion: SourceRefreshHandler?
+    ) {
+        defer {
+            let snapshot = withState { state -> SourceRefreshSnapshot in
+                state.sourcePollInFlight = false
+                return state.sourceRefresh
             }
+            completion?(snapshot)
+        }
+        let allowed = withState { state -> Bool in
+            guard !state.stopped else { return false }
+            if force { return true }
+            guard let lastThinkingDate = state.lastThinkingDate else { return false }
             return now.timeIntervalSince(lastThinkingDate) <= 600
         }
         guard allowed else { return }
 
-        if configuration.enableReviews {
+        let selection = withState { $0.sourceSelection }
+        if selection.isEnabled(.reviews), force || reviewSource.isDue(now: now) {
+            withState { $0.sourceRefresh[.reviews].begin(at: now) }
             do {
-                let reviews = try reviewSource.reviewsIfDue(pollingAllowed: true, now: now)
-                withState { $0.reviews = reviews }
+                let reviews = try reviewSource.reviewsIfDue(
+                    pollingAllowed: true,
+                    force: force,
+                    now: now
+                )
+                withState {
+                    $0.reviews = reviews
+                    $0.sourceRefresh[.reviews].succeed(at: Date())
+                }
             } catch {
+                withState { $0.sourceRefresh[.reviews].fail(at: Date()) }
                 logger.error("Review poll failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        if configuration.enableFailingCI {
+        if selection.isEnabled(.failingCI), force || ciSource.isDue(now: now) {
+            withState { $0.sourceRefresh[.failingCI].begin(at: now) }
             do {
-                let items = try ciSource.itemsIfDue(pollingAllowed: true, now: now)
-                withState { $0.failingCI = items }
+                let items = try ciSource.itemsIfDue(
+                    pollingAllowed: true,
+                    force: force,
+                    now: now
+                )
+                withState {
+                    $0.failingCI = items
+                    $0.sourceRefresh[.failingCI].succeed(at: Date())
+                }
             } catch {
+                withState { $0.sourceRefresh[.failingCI].fail(at: Date()) }
                 logger.error("CI poll failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -155,12 +242,15 @@ public final class MeanwhileRuntime: @unchecked Sendable {
     }
 
     private func present(now: Date = Date()) {
-        let snapshot = withState { ($0.stopped, $0.sessions, $0.reviews, $0.failingCI) }
+        let snapshot = withState {
+            ($0.stopped, $0.sessions, $0.reviews, $0.failingCI, $0.sourceSelection)
+        }
         guard !snapshot.0 else { return }
         let presentation = engine.presentation(
             sessions: snapshot.1,
             reviews: snapshot.2,
             failingCI: snapshot.3,
+            sourceSelection: snapshot.4,
             now: now
         )
         withState { $0.currentItem = presentation.item }

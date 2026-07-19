@@ -4,7 +4,7 @@ Meanwhile is a macOS 14 menu-bar app that turns coding-agent wait time into one
 small, actionable GitHub task. It is built in Swift 5.10 with no third-party
 dependencies.
 
-## v0.1.2 behavior
+## v0.1.3 behavior
 
 - Uses Claude Code and Codex lifecycle hooks—not process or CPU guesses—to track
   each session as `thinking`, `needs-you`, or `idle`.
@@ -29,6 +29,15 @@ dependencies.
 - Offers off-by-default, needs-you-only notifications with a selectable delay.
   Meanwhile confirms the task is still waiting before posting one quiet reminder;
   reviews and CI never notify.
+- Lets you run a clearly labelled six-second attention test from Settings,
+  including a test notification when reminders are available. The test never
+  creates work or replaces a real interruption.
+- Shows independent freshness for review and failing-CI sources, with manual
+  refresh and in-context recovery for GitHub authentication or agent hooks.
+- Keeps agent requests always on while letting you independently enable reviews
+  and failing CI from Settings, with no relaunch required.
+- Keeps failed agent and browser handoffs active, offering Settings or Copy Link
+  instead of silently losing the route back.
 - Shows the installed version and latest GitHub release in Settings without
   downloading or installing anything automatically.
 - Identifies agent sessions that may be stuck and lets you clear only those
@@ -126,9 +135,9 @@ cask with:
 GITHUB_REPOSITORY="tcballard/Meanwhile" ./Scripts/release-unsigned.sh
 ```
 
-This produces `dist/Meanwhile-0.1.2-unsigned.zip` and `dist/meanwhile.rb`.
+This produces `dist/Meanwhile-0.1.3-unsigned.zip` and `dist/meanwhile.rb`.
 Publish the archive only as a GitHub **pre-release** tagged
-`v0.1.2-unsigned`. The generated cask identifies it as unsigned and tells users
+`v0.1.3-unsigned`. The generated cask identifies it as unsigned and tells users
 that Gatekeeper will block the first launch. Users who trust the build must
 explicitly remove quarantine themselves; the cask does not bypass Gatekeeper.
 
@@ -144,7 +153,7 @@ GITHUB_REPOSITORY="owner/Meanwhile" \
 ```
 
 The script builds and signs the app in a temporary local directory, then
-produces `dist/Meanwhile-0.1.2.zip` and `dist/meanwhile.rb`. It verifies the
+produces `dist/Meanwhile-0.1.3.zip` and `dist/meanwhile.rb`. It verifies the
 stapled app and a clean extraction of the final archive before returning.
 Publishing the archive, cask, and GitHub release remains an explicit
 release-owner action. Set `RELEASE_OUTPUT_DIR` to write the final artifacts

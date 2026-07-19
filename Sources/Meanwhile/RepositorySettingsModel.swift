@@ -37,6 +37,11 @@ final class RepositorySettingsModel: ObservableObject {
     @Published private(set) var needsYouNotificationSettings: NeedsYouNotificationSettings
     @Published private(set) var needsYouNotificationPermission: NeedsYouNotificationPermission
     @Published private(set) var isRequestingNotificationPermission = false
+    @Published private(set) var attentionTestIsRunning = false
+    @Published private(set) var attentionTestResult: AttentionTestRunResult?
+    @Published private(set) var sourceRefreshSnapshot: SourceRefreshSnapshot
+    @Published private(set) var githubLoginCopyMessage: String?
+    @Published private(set) var attentionSourceSelection: AttentionSourceSelection
 
     let appVersion: String
     let buildVersion: String
@@ -92,6 +97,7 @@ final class RepositorySettingsModel: ObservableObject {
     private let eventStore: AgentEventStore
     private let recentSignalStore: RecentSignalStore
     private let notificationPreferences: NeedsYouNotificationPreferences
+    private let attentionSourcePreferences: AttentionSourcePreferences
     private let notificationController: NeedsYouNotificationController
     private let releaseUpdateChecker: ReleaseUpdateChecker
     private let sessionStaleAfter: TimeInterval
@@ -105,6 +111,10 @@ final class RepositorySettingsModel: ObservableObject {
     private let hotKeyDidChange: (HotKeyConfiguration?) -> Void
     private let integrationDidInstall: (AgentIntegrationInstallResult) -> Void
     private let notificationSettingsDidChange: () -> Void
+    private let runAttentionTestAction: (@escaping (AttentionTestRunResult) -> Void) -> Void
+    private let sourceRefreshSnapshotProvider: () -> SourceRefreshSnapshot
+    private let refreshSourcesAction: (@escaping @Sendable (SourceRefreshSnapshot) -> Void) -> Void
+    private let sourceSelectionDidChange: (AttentionSourceSelection) -> Void
     private var hasLoaded = false
     private var diagnosticsFeedbackID = UUID()
 
@@ -117,6 +127,7 @@ final class RepositorySettingsModel: ObservableObject {
         eventStore: AgentEventStore,
         recentSignalStore: RecentSignalStore,
         notificationPreferences: NeedsYouNotificationPreferences,
+        attentionSourcePreferences: AttentionSourcePreferences,
         notificationController: NeedsYouNotificationController,
         releaseUpdateChecker: ReleaseUpdateChecker = ReleaseUpdateChecker(),
         sessionStaleAfter: TimeInterval,
@@ -131,7 +142,11 @@ final class RepositorySettingsModel: ObservableObject {
         selectionDidChange: @escaping () -> Void,
         hotKeyDidChange: @escaping (HotKeyConfiguration?) -> Void,
         integrationDidInstall: @escaping (AgentIntegrationInstallResult) -> Void,
-        notificationSettingsDidChange: @escaping () -> Void
+        notificationSettingsDidChange: @escaping () -> Void,
+        runAttentionTest: @escaping (@escaping (AttentionTestRunResult) -> Void) -> Void,
+        sourceRefreshSnapshot: @escaping () -> SourceRefreshSnapshot,
+        refreshSources: @escaping (@escaping @Sendable (SourceRefreshSnapshot) -> Void) -> Void,
+        sourceSelectionDidChange: @escaping (AttentionSourceSelection) -> Void
     ) {
         self.preferences = preferences
         self.hotKeyPreferences = hotKeyPreferences
@@ -141,6 +156,7 @@ final class RepositorySettingsModel: ObservableObject {
         self.eventStore = eventStore
         self.recentSignalStore = recentSignalStore
         self.notificationPreferences = notificationPreferences
+        self.attentionSourcePreferences = attentionSourcePreferences
         self.notificationController = notificationController
         self.releaseUpdateChecker = releaseUpdateChecker
         self.sessionStaleAfter = sessionStaleAfter
@@ -156,6 +172,10 @@ final class RepositorySettingsModel: ObservableObject {
         self.hotKeyDidChange = hotKeyDidChange
         self.integrationDidInstall = integrationDidInstall
         self.notificationSettingsDidChange = notificationSettingsDidChange
+        runAttentionTestAction = runAttentionTest
+        sourceRefreshSnapshotProvider = sourceRefreshSnapshot
+        refreshSourcesAction = refreshSources
+        self.sourceSelectionDidChange = sourceSelectionDidChange
         let snapshot = preferences.snapshot
         includesAllRepositories = snapshot.includesAllRepositories
         selectedRepositories = snapshot.selectedRepositories
@@ -163,6 +183,8 @@ final class RepositorySettingsModel: ObservableObject {
         self.launchAtLoginStatus = launchAtLoginStatus()
         needsYouNotificationSettings = notificationPreferences.settings
         needsYouNotificationPermission = notificationController.permission
+        self.sourceRefreshSnapshot = sourceRefreshSnapshot()
+        attentionSourceSelection = attentionSourcePreferences.selection
     }
 
     func loadRepositories(force: Bool = false) {
@@ -231,8 +253,75 @@ final class RepositorySettingsModel: ObservableObject {
                 }
                 self.sessionInspection = sessionInspection
                 launchAtLoginStatus = launchAtLoginStatusProvider()
+                sourceRefreshSnapshot = sourceRefreshSnapshotProvider()
                 isCheckingHealth = false
             }
+        }
+    }
+
+    func runAttentionTest() {
+        guard !attentionTestIsRunning else { return }
+        attentionTestIsRunning = true
+        attentionTestResult = nil
+        runAttentionTestAction { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.attentionTestResult = result
+                if result == .blockedByRealAttention {
+                    self?.attentionTestIsRunning = false
+                }
+            }
+        }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_500_000_000)
+            self?.attentionTestIsRunning = false
+        }
+    }
+
+    func attentionTestDidEnd() {
+        attentionTestIsRunning = false
+    }
+
+    func refreshGitHubSources() {
+        let now = Date()
+        sourceRefreshSnapshot = sourceRefreshSnapshotProvider()
+        sourceRefreshSnapshot.reviews.begin(at: now)
+        sourceRefreshSnapshot.failingCI.begin(at: now)
+        refreshSourcesAction { [weak self] snapshot in
+            Task { @MainActor [weak self] in
+                self?.sourceRefreshSnapshot = snapshot
+                self?.refreshStatus()
+            }
+        }
+    }
+
+    func setAttentionSourceSelection(_ selection: AttentionSourceSelection) {
+        if selection.reviewsEnabled != attentionSourceSelection.reviewsEnabled {
+            attentionSourcePreferences.setReviewsEnabled(selection.reviewsEnabled)
+        }
+        if selection.failingCIEnabled != attentionSourceSelection.failingCIEnabled {
+            attentionSourcePreferences.setFailingCIEnabled(selection.failingCIEnabled)
+        }
+        attentionSourceSelection = attentionSourcePreferences.selection
+        sourceSelectionDidChange(attentionSourceSelection)
+        sourceRefreshSnapshot.reviews.isEnabled = attentionSourceSelection.reviewsEnabled
+        sourceRefreshSnapshot.failingCI.isEnabled = attentionSourceSelection.failingCIEnabled
+        if !attentionSourceSelection.reviewsEnabled {
+            sourceRefreshSnapshot.reviews.isRefreshing = false
+        }
+        if !attentionSourceSelection.failingCIEnabled {
+            sourceRefreshSnapshot.failingCI.isRefreshing = false
+        }
+    }
+
+    func copyGitHubLoginCommand() {
+        githubLoginCopyMessage = copyText("gh auth login")
+            ? "Copied `gh auth login` to the clipboard."
+            : "Meanwhile could not copy the login command."
+        let message = githubLoginCopyMessage
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard self?.githubLoginCopyMessage == message else { return }
+            self?.githubLoginCopyMessage = nil
         }
     }
 
@@ -371,6 +460,7 @@ final class RepositorySettingsModel: ObservableObject {
             repositoryScopeIncludesAll: includesAllRepositories,
             accessibleRepositoryCount: availableRepositories.count,
             selectedRepositoryCount: selectedRepositories.count,
+            attentionSourceSelection: attentionSourceSelection,
             hotKeyConfigured: hotKey != nil,
             sessionInspection: sessionInspection,
             lastAgentEvent: lastAgentEvent,

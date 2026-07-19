@@ -66,6 +66,51 @@ final class MeanwhileEngineTests: XCTestCase {
         XCTAssertEqual(presentation.item?.id, "ci:acme/repo#2")
     }
 
+    func testLiveSourceSelectionFiltersGitHubWorkWithoutDisablingAgents() {
+        let context = makeEngine()
+        defer { context.cleanup() }
+        let now = Date(timeIntervalSince1970: 4_500)
+        let sessions = [makeSession(phase: .thinking, enteredAt: now.addingTimeInterval(-30))]
+        let review = makeReview(number: 1, createdAt: now.addingTimeInterval(-300))
+        let ci = makeCI(number: 2, createdAt: now.addingTimeInterval(-200))
+
+        let reviewsOnly = context.engine.presentation(
+            sessions: sessions,
+            reviews: [review],
+            failingCI: [ci],
+            sourceSelection: AttentionSourceSelection(
+                reviewsEnabled: true,
+                failingCIEnabled: false
+            ),
+            now: now
+        )
+        XCTAssertEqual(reviewsOnly.item?.kind, .review)
+
+        let agentsOnly = context.engine.presentation(
+            sessions: sessions,
+            reviews: [review],
+            failingCI: [ci],
+            sourceSelection: AttentionSourceSelection(
+                reviewsEnabled: false,
+                failingCIEnabled: false
+            ),
+            now: now
+        )
+        XCTAssertNil(agentsOnly.item)
+
+        let needsYou = context.engine.presentation(
+            sessions: [makeSession(phase: .needsYou, enteredAt: now)],
+            reviews: [review],
+            failingCI: [ci],
+            sourceSelection: AttentionSourceSelection(
+                reviewsEnabled: false,
+                failingCIEnabled: false
+            ),
+            now: now
+        )
+        XCTAssertEqual(needsYou.item?.kind, .needsYou)
+    }
+
     func testSnoozeMovesToNextDeterministicItem() {
         let context = makeEngine()
         defer { context.cleanup() }

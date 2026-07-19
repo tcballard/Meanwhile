@@ -45,6 +45,24 @@ final class GitHubCISourceTests: XCTestCase {
         XCTAssertEqual(runner.commands.count, 2)
     }
 
+    func testForceBypassesCache() throws {
+        let runner = CICommandRunner(result: ShellCommandResult(
+            exitCode: 0,
+            stdout: Self.fixture,
+            stderr: ""
+        ))
+        let source = GitHubCISource(runner: runner, cacheInterval: 60)
+        let start = Date(timeIntervalSince1970: 2_000)
+
+        _ = try source.itemsIfDue(pollingAllowed: true, now: start)
+        _ = try source.itemsIfDue(
+            pollingAllowed: true,
+            force: true,
+            now: start.addingTimeInterval(1)
+        )
+        XCTAssertEqual(runner.commands.count, 2)
+    }
+
     private static let fixture = """
     {
       "data": {"viewer": {"pullRequests": {"nodes": [
