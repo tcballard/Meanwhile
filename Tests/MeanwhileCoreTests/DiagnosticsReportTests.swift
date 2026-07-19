@@ -29,6 +29,10 @@ final class DiagnosticsReportTests: XCTestCase {
             repositoryScopeIncludesAll: false,
             accessibleRepositoryCount: 68,
             selectedRepositoryCount: 3,
+            attentionSourceSelection: AttentionSourceSelection(
+                reviewsEnabled: false,
+                failingCIEnabled: true
+            ),
             hotKeyConfigured: true,
             sessionInspection: AgentSessionInspection(
                 activeCount: 2,
@@ -64,10 +68,13 @@ final class DiagnosticsReportTests: XCTestCase {
         )
 
         XCTAssertTrue(report.contains("App: 0.1.2 (3)"))
-        XCTAssertTrue(report.contains("Schema: 1"))
+        XCTAssertTrue(report.contains("Schema: 2"))
         XCTAssertTrue(report.contains("Launch at login: needs approval"))
         XCTAssertTrue(report.contains("Update: available (v0.1.3)"))
         XCTAssertTrue(report.contains("Repository scope: selected only (3)"))
+        XCTAssertTrue(report.contains("Agent requests: enabled"))
+        XCTAssertTrue(report.contains("Failing CI source: enabled"))
+        XCTAssertTrue(report.contains("Review source: disabled"))
         XCTAssertTrue(report.contains("Sessions that may be stuck: 1"))
         XCTAssertTrue(report.contains("Last agent event: codex, needs-you"))
         XCTAssertTrue(report.contains("Recent ciFailed: 1"))

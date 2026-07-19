@@ -34,6 +34,8 @@ dependencies.
   creates work or replaces a real interruption.
 - Shows independent freshness for review and failing-CI sources, with manual
   refresh and in-context recovery for GitHub authentication or agent hooks.
+- Keeps agent requests always on while letting you independently enable reviews
+  and failing CI from Settings, with no relaunch required.
 - Keeps failed agent and browser handoffs active, offering Settings or Copy Link
   instead of silently losing the route back.
 - Shows the installed version and latest GitHub release in Settings without

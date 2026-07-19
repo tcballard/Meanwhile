@@ -18,6 +18,7 @@ public struct DiagnosticsSnapshot: Sendable {
     public var repositoryScopeIncludesAll: Bool
     public var accessibleRepositoryCount: Int
     public var selectedRepositoryCount: Int
+    public var attentionSourceSelection: AttentionSourceSelection
     public var hotKeyConfigured: Bool
     public var sessionInspection: AgentSessionInspection
     public var lastAgentEvent: AgentSessionState?
@@ -34,6 +35,7 @@ public struct DiagnosticsSnapshot: Sendable {
         repositoryScopeIncludesAll: Bool,
         accessibleRepositoryCount: Int,
         selectedRepositoryCount: Int,
+        attentionSourceSelection: AttentionSourceSelection,
         hotKeyConfigured: Bool,
         sessionInspection: AgentSessionInspection,
         lastAgentEvent: AgentSessionState?,
@@ -49,6 +51,7 @@ public struct DiagnosticsSnapshot: Sendable {
         self.repositoryScopeIncludesAll = repositoryScopeIncludesAll
         self.accessibleRepositoryCount = accessibleRepositoryCount
         self.selectedRepositoryCount = selectedRepositoryCount
+        self.attentionSourceSelection = attentionSourceSelection
         self.hotKeyConfigured = hotKeyConfigured
         self.sessionInspection = sessionInspection
         self.lastAgentEvent = lastAgentEvent
@@ -63,7 +66,7 @@ public enum MeanwhileDiagnosticsReport {
     ) -> String {
         var lines = [
             "Meanwhile diagnostics",
-            "Schema: 1",
+            "Schema: 2",
             "Generated: \(timestamp(generatedAt))",
             "App: \(snapshot.appVersion) (\(snapshot.buildVersion))",
             "macOS: \(snapshot.operatingSystemVersion)",
@@ -75,6 +78,9 @@ public enum MeanwhileDiagnosticsReport {
             "Claude status line conflict: \(yesNo(snapshot.integrationHealth.claudeStatuslineConflict))",
             "GitHub CLI: \(snapshot.githubAuthenticationStatus == .authenticated ? "authenticated" : "not authenticated")",
             "Repository scope: \(repositoryScopeDescription(snapshot))",
+            "Agent requests: enabled",
+            "Failing CI source: \(enabledDisabled(snapshot.attentionSourceSelection.failingCIEnabled))",
+            "Review source: \(enabledDisabled(snapshot.attentionSourceSelection.reviewsEnabled))",
             "Keyboard shortcut: \(snapshot.hotKeyConfigured ? "configured" : "not configured")",
             "Active agent sessions: \(snapshot.sessionInspection.activeCount)",
             "Sessions that may be stuck: \(snapshot.sessionInspection.stuckCount)"
@@ -108,6 +114,10 @@ public enum MeanwhileDiagnosticsReport {
 
     private static func yesNo(_ value: Bool) -> String {
         value ? "yes" : "no"
+    }
+
+    private static func enabledDisabled(_ value: Bool) -> String {
+        value ? "enabled" : "disabled"
     }
 
     private static func launchAtLoginDescription(_ status: LaunchAtLoginStatus) -> String {

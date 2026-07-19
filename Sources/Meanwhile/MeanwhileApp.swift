@@ -19,6 +19,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recentSignalStore = RecentSignalStore()
     private let launchAtLoginController = LaunchAtLoginController()
     private let needsYouNotificationPreferences = NeedsYouNotificationPreferences()
+    private lazy var attentionSourcePreferences = AttentionSourcePreferences(
+        defaultSelection: AttentionSourceSelection(
+            reviewsEnabled: configuration.enableReviews,
+            failingCIEnabled: configuration.enableFailingCI
+        )
+    )
     private lazy var integrationInstaller = AgentIntegrationInstaller(helperURL: helperURL())
     private lazy var hotKeyPreferences = HotKeyPreferences(defaultHotKey: configuration.hotKey)
     private lazy var needsYouNotificationController = NeedsYouNotificationController()
@@ -49,6 +55,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         eventStore: eventStore,
         recentSignalStore: recentSignalStore,
         notificationPreferences: needsYouNotificationPreferences,
+        attentionSourcePreferences: attentionSourcePreferences,
         notificationController: needsYouNotificationController,
         sessionStaleAfter: configuration.sessionStaleSeconds,
         appVersion: Bundle.main.object(
@@ -101,12 +108,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         sourceRefreshSnapshot: { [weak self] in
             self?.runtime?.sourceRefreshSnapshot
                 ?? SourceRefreshSnapshot(
-                    reviewsEnabled: self?.configuration.enableReviews ?? true,
-                    failingCIEnabled: self?.configuration.enableFailingCI ?? true
+                    reviewsEnabled: self?.attentionSourcePreferences.selection.reviewsEnabled ?? true,
+                    failingCIEnabled: self?.attentionSourcePreferences.selection.failingCIEnabled ?? true
                 )
         },
         refreshSources: { [weak self] completion in
             self?.runtime?.refreshSources(completion: completion)
+        },
+        sourceSelectionDidChange: { [weak self] selection in
+            self?.runtime?.sourceSelectionDidChange(selection)
         }
     )
 
@@ -158,7 +168,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             eventStore: eventStore,
             reviewSource: reviewSource,
             ciSource: ciSource,
-            configuration: configuration
+            configuration: configuration,
+            sourceSelection: attentionSourcePreferences.selection
         ) { [weak self] presentation in
             Task { @MainActor [weak self] in self?.present(presentation) }
         }

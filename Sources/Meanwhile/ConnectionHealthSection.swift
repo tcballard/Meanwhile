@@ -257,7 +257,7 @@ private struct SourceHealthRow: View {
     }
 
     private var detail: String {
-        guard record.isEnabled else { return "Disabled in Meanwhile’s configuration." }
+        guard record.isEnabled else { return "Disabled in Attention sources." }
         if record.isRefreshing { return "Checking GitHub now." }
         if record.lastFailureAt != nil { return "Check GitHub CLI authentication, then retry." }
         if record.lastSuccessAt != nil {

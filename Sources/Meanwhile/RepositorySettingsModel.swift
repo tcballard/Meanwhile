@@ -41,6 +41,7 @@ final class RepositorySettingsModel: ObservableObject {
     @Published private(set) var attentionTestResult: AttentionTestRunResult?
     @Published private(set) var sourceRefreshSnapshot: SourceRefreshSnapshot
     @Published private(set) var githubLoginCopyMessage: String?
+    @Published private(set) var attentionSourceSelection: AttentionSourceSelection
 
     let appVersion: String
     let buildVersion: String
@@ -96,6 +97,7 @@ final class RepositorySettingsModel: ObservableObject {
     private let eventStore: AgentEventStore
     private let recentSignalStore: RecentSignalStore
     private let notificationPreferences: NeedsYouNotificationPreferences
+    private let attentionSourcePreferences: AttentionSourcePreferences
     private let notificationController: NeedsYouNotificationController
     private let releaseUpdateChecker: ReleaseUpdateChecker
     private let sessionStaleAfter: TimeInterval
@@ -112,6 +114,7 @@ final class RepositorySettingsModel: ObservableObject {
     private let runAttentionTestAction: (@escaping (AttentionTestRunResult) -> Void) -> Void
     private let sourceRefreshSnapshotProvider: () -> SourceRefreshSnapshot
     private let refreshSourcesAction: (@escaping @Sendable (SourceRefreshSnapshot) -> Void) -> Void
+    private let sourceSelectionDidChange: (AttentionSourceSelection) -> Void
     private var hasLoaded = false
     private var diagnosticsFeedbackID = UUID()
 
@@ -124,6 +127,7 @@ final class RepositorySettingsModel: ObservableObject {
         eventStore: AgentEventStore,
         recentSignalStore: RecentSignalStore,
         notificationPreferences: NeedsYouNotificationPreferences,
+        attentionSourcePreferences: AttentionSourcePreferences,
         notificationController: NeedsYouNotificationController,
         releaseUpdateChecker: ReleaseUpdateChecker = ReleaseUpdateChecker(),
         sessionStaleAfter: TimeInterval,
@@ -141,7 +145,8 @@ final class RepositorySettingsModel: ObservableObject {
         notificationSettingsDidChange: @escaping () -> Void,
         runAttentionTest: @escaping (@escaping (AttentionTestRunResult) -> Void) -> Void,
         sourceRefreshSnapshot: @escaping () -> SourceRefreshSnapshot,
-        refreshSources: @escaping (@escaping @Sendable (SourceRefreshSnapshot) -> Void) -> Void
+        refreshSources: @escaping (@escaping @Sendable (SourceRefreshSnapshot) -> Void) -> Void,
+        sourceSelectionDidChange: @escaping (AttentionSourceSelection) -> Void
     ) {
         self.preferences = preferences
         self.hotKeyPreferences = hotKeyPreferences
@@ -151,6 +156,7 @@ final class RepositorySettingsModel: ObservableObject {
         self.eventStore = eventStore
         self.recentSignalStore = recentSignalStore
         self.notificationPreferences = notificationPreferences
+        self.attentionSourcePreferences = attentionSourcePreferences
         self.notificationController = notificationController
         self.releaseUpdateChecker = releaseUpdateChecker
         self.sessionStaleAfter = sessionStaleAfter
@@ -169,6 +175,7 @@ final class RepositorySettingsModel: ObservableObject {
         runAttentionTestAction = runAttentionTest
         sourceRefreshSnapshotProvider = sourceRefreshSnapshot
         refreshSourcesAction = refreshSources
+        self.sourceSelectionDidChange = sourceSelectionDidChange
         let snapshot = preferences.snapshot
         includesAllRepositories = snapshot.includesAllRepositories
         selectedRepositories = snapshot.selectedRepositories
@@ -177,6 +184,7 @@ final class RepositorySettingsModel: ObservableObject {
         needsYouNotificationSettings = notificationPreferences.settings
         needsYouNotificationPermission = notificationController.permission
         self.sourceRefreshSnapshot = sourceRefreshSnapshot()
+        attentionSourceSelection = attentionSourcePreferences.selection
     }
 
     func loadRepositories(force: Bool = false) {
@@ -283,6 +291,25 @@ final class RepositorySettingsModel: ObservableObject {
                 self?.sourceRefreshSnapshot = snapshot
                 self?.refreshStatus()
             }
+        }
+    }
+
+    func setAttentionSourceSelection(_ selection: AttentionSourceSelection) {
+        if selection.reviewsEnabled != attentionSourceSelection.reviewsEnabled {
+            attentionSourcePreferences.setReviewsEnabled(selection.reviewsEnabled)
+        }
+        if selection.failingCIEnabled != attentionSourceSelection.failingCIEnabled {
+            attentionSourcePreferences.setFailingCIEnabled(selection.failingCIEnabled)
+        }
+        attentionSourceSelection = attentionSourcePreferences.selection
+        sourceSelectionDidChange(attentionSourceSelection)
+        sourceRefreshSnapshot.reviews.isEnabled = attentionSourceSelection.reviewsEnabled
+        sourceRefreshSnapshot.failingCI.isEnabled = attentionSourceSelection.failingCIEnabled
+        if !attentionSourceSelection.reviewsEnabled {
+            sourceRefreshSnapshot.reviews.isRefreshing = false
+        }
+        if !attentionSourceSelection.failingCIEnabled {
+            sourceRefreshSnapshot.failingCI.isRefreshing = false
         }
     }
 
@@ -433,6 +460,7 @@ final class RepositorySettingsModel: ObservableObject {
             repositoryScopeIncludesAll: includesAllRepositories,
             accessibleRepositoryCount: availableRepositories.count,
             selectedRepositoryCount: selectedRepositories.count,
+            attentionSourceSelection: attentionSourceSelection,
             hotKeyConfigured: hotKey != nil,
             sessionInspection: sessionInspection,
             lastAgentEvent: lastAgentEvent,

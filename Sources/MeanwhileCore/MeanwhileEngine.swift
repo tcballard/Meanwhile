@@ -41,8 +41,13 @@ public final class MeanwhileEngine: @unchecked Sendable {
         sessions: [AgentSessionState],
         reviews: [ReviewItem],
         failingCI: [FailingCIItem],
+        sourceSelection: AttentionSourceSelection? = nil,
         now: Date = Date()
     ) -> MeanwhilePresentation {
+        let sourceSelection = sourceSelection ?? AttentionSourceSelection(
+            reviewsEnabled: configuration.enableReviews,
+            failingCIEnabled: configuration.enableFailingCI
+        )
         let activeSessions = sessions.filter { $0.phase != .idle }
         let needsYou = sessions.filter { $0.phase == .needsYou }
         let thinking = sessions.filter { $0.phase == .thinking }
@@ -58,7 +63,7 @@ public final class MeanwhileEngine: @unchecked Sendable {
                 session: session
             )
         }
-        let ciItems = configuration.enableFailingCI ? failingCI.map { item in
+        let ciItems = sourceSelection.failingCIEnabled ? failingCI.map { item in
             WorkItem(
                 id: "ci:\(item.repository)#\(item.number)",
                 kind: .failingCI,
@@ -68,7 +73,7 @@ public final class MeanwhileEngine: @unchecked Sendable {
                 createdAt: item.createdAt
             )
         } : []
-        let reviewItems = configuration.enableReviews ? reviews.map { item in
+        let reviewItems = sourceSelection.reviewsEnabled ? reviews.map { item in
             WorkItem(
                 id: "review:\(item.repository)#\(item.number)",
                 kind: .review,

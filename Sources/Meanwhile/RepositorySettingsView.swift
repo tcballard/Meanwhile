@@ -8,6 +8,7 @@ struct RepositorySettingsView: View {
     @AppStorage("settings.section.aboutSupport.expanded") private var isAboutSupportExpanded = true
     @AppStorage("settings.section.notifications.expanded") private var isNotificationsExpanded = true
     @AppStorage("settings.section.attentionTest.expanded") private var isAttentionTestExpanded = true
+    @AppStorage("settings.section.attentionSources.expanded") private var isAttentionSourcesExpanded = true
     @AppStorage("settings.section.repositorySources.expanded") private var isRepositorySourcesExpanded = true
     @AppStorage("settings.section.recentSignals.expanded") private var isRecentSignalsExpanded = true
     @State private var searchText = ""
@@ -93,6 +94,19 @@ struct RepositorySettingsView: View {
                         isRunning: model.attentionTestIsRunning,
                         result: model.attentionTestResult,
                         run: model.runAttentionTest
+                    )
+                }
+                Divider()
+                CollapsibleSettingsSection(
+                    title: "Attention sources",
+                    trailing: sourceSelectionTrailing,
+                    isExpanded: $isAttentionSourcesExpanded
+                ) {
+                    AttentionSourcesSettingsSection(
+                        selection: Binding(
+                            get: { model.attentionSourceSelection },
+                            set: { model.setAttentionSourceSelection($0) }
+                        )
                     )
                 }
                 Divider()
@@ -236,6 +250,16 @@ struct RepositorySettingsView: View {
                 model.refreshStatus()
             }
         }
+    }
+
+    private var sourceSelectionTrailing: String {
+        let githubSourceCount = [
+            model.attentionSourceSelection.reviewsEnabled,
+            model.attentionSourceSelection.failingCIEnabled
+        ].filter { $0 }.count
+        return githubSourceCount == 0
+            ? "Agents only"
+            : "\(githubSourceCount + 1) enabled"
     }
 }
 
